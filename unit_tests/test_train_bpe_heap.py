@@ -27,68 +27,30 @@ def test_enqueue_available_pairs_respects_neighbor_side():
     assert set(pair_heap) == {(-5, b"a", b"b"), (-4, b"b", b"c")}
 
 
-def test_train_bpe_breaks_frequency_ties_by_lexicographic_pair_order(tmp_path, monkeypatch):
+def test_train_bpe_breaks_frequency_ties_by_lexicographic_pair_order(tmp_path):
     input_path = tmp_path / "corpus.txt"
-    input_path.write_text("dummy corpus", encoding="utf-8")
-
-    frequency_map = {
-        (b"a", b"c"): 10,
-        (b"b", b"a"): 10,
-        (b"c", b"b"): 9,
-    }
-    adjacent = {
-        b"a": {"left": set(), "right": {b"c"}},
-        b"b": {"left": set(), "right": {b"a"}},
-        b"c": {"left": {b"a"}, "right": {b"b"}},
-    }
-
-    monkeypatch.setattr(
-        "cs336_basics.bpe.tokenize_with_special",
-        lambda text, special_tokens: (frequency_map, adjacent),
-    )
+    input_path.write_text("ba\nac", encoding="utf-8")
 
     _, merges = train_bpe(
         input_path=input_path,
-        vocab_size=259,
-        special_tokens=["<|endoftext|>"],
+        vocab_size=257,
+        special_tokens=[],
     )
 
-    assert merges[0] == (b"a", b"c")
+    assert merges[0] == (b"b", b"a")
 
 
-def test_train_bpe_uses_heap_and_skips_seen_merged_tokens(tmp_path, monkeypatch):
+def test_train_bpe_can_merge_with_previously_created_tokens(tmp_path):
     input_path = tmp_path / "corpus.txt"
-    input_path.write_text("dummy corpus", encoding="utf-8")
-
-    frequency_map = {
-        (b"b", b"c"): 11,
-        (b"a", b"b"): 10,
-        (b"ab", b"c"): 9,
-        (b"a", b"bc"): 8,
-    }
-    adjacent = {
-        b"a": {"left": set(), "right": {b"b", b"bc"}},
-        b"b": {"left": {b"a"}, "right": {b"c"}},
-        b"ab": {"left": set(), "right": {b"c"}},
-        b"bc": {"left": {b"a"}, "right": set()},
-        b"c": {"left": {b"ab", b"b"}, "right": set()},
-        b"x": {"left": set(), "right": {b"y"}},
-        b"y": {"left": {b"x"}, "right": set()},
-    }
-
-    monkeypatch.setattr(
-        "cs336_basics.bpe.tokenize_with_special",
-        lambda text, special_tokens: (frequency_map, adjacent),
-    )
+    input_path.write_text("bc\nabc", encoding="utf-8")
 
     vocab, merges = train_bpe(
         input_path=input_path,
-        vocab_size=260,
-        special_tokens=["<|endoftext|>"],
+        vocab_size=258,
+        special_tokens=[],
     )
 
-    assert merges == [(b"b", b"c"), (b"a", b"b"), (b"ab", b"c")]
-    assert b"ab" in vocab.values()
+    assert merges == [(b"b", b"c"), (b"a", b"bc")]
     assert b"bc" in vocab.values()
     assert b"abc" in vocab.values()
 
@@ -98,5 +60,18 @@ def test_train_bpe_heap():
         vocab_size=300,
         special_tokens=["<|endoftext|>"],
     )
-    print("vocab:", vocab)
-    print("merges:", merges)
+    assert len(vocab) == 300
+    assert len(merges) == 43
+
+
+def test_train_bpe_retokenizes_words_after_merge(tmp_path):
+    input_path = tmp_path / "corpus.txt"
+    input_path.write_text("aaa", encoding="utf-8")
+
+    _, merges = train_bpe(
+        input_path=input_path,
+        vocab_size=258,
+        special_tokens=[],
+    )
+
+    assert merges == [(b"a", b"a"), (b"aa", b"a")]

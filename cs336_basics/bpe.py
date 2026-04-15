@@ -1,12 +1,32 @@
+import heapq
 import os
-import io
-import contextlib
+from dataclasses import dataclass
 
 import regex
-import heapq
-from typing import TypeVar, Generic, List, Optional, Callable, Any
 
-from cs336_basics.pretokenization_example import find_chunk_boundaries
+TokenPair = tuple[bytes, bytes]
+PairHeapItem = tuple[int, "ReverseBytes", "ReverseBytes", bytes, bytes, int]
+
+BASE_PATTERN = (
+    r"'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"
+)
+BYTE_TOKENS = tuple(bytes([i]) for i in range(256))
+
+
+@dataclass(slots=True)
+class WordState:
+    frequency: int
+    tokens: list[bytes]
+    pair_counts: dict[TokenPair, int]
+
+
+@dataclass(frozen=True, slots=True)
+class ReverseBytes:
+    value: bytes
+
+    def __lt__(self, other: "ReverseBytes") -> bool:
+        return self.value > other.value
+
 
 def train_bpe(
     input_path: str | os.PathLike,
@@ -14,105 +34,254 @@ def train_bpe(
     special_tokens: list[str],
     **kwargs,
 ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
-    """Given the path to an input corpus, run train a BPE tokenizer and
-    output its vocabulary and merges.
-
-    Args:
-        input_path (str | os.PathLike): Path to BPE tokenizer training data.
-        vocab_size (int): Total number of items in the tokenizer's vocabulary (including special tokens).
-        special_tokens (list[str]): A list of string special tokens to be added to the tokenizer vocabulary.
-            These strings will never be split into multiple tokens, and will always be
-            kept as a single token. If these special tokens occur in the `input_path`,
-            they are treated as any other string.
-
-    Returns:
-        tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
-            vocab:
-                The trained tokenizer vocabulary, a mapping from int (token ID in the vocabulary)
-                to bytes (token bytes)
-            merges:
-                BPE merges. Each list item is a tuple of bytes (<token1>, <token2>),
-                representing that <token1> was merged with <token2>.
-                Merges are ordered by order of creation.
-    """
+    """Train a BPE tokenizer and return the vocabulary and merge list."""
     vocab: dict[int, bytes] = {}
-    merge_list: list[tuple[bytes, bytes]] = []
-    vocab_count = 0
+    merges: list[tuple[bytes, bytes]] = []
 
+    next_vocab_id = 0
     for special_token in special_tokens:
-        vocab[vocab_count] = special_token.encode("utf-8")
-        vocab_count += 1
+        vocab[next_vocab_id] = special_token.encode("utf-8")
+        next_vocab_id += 1
 
-    for i in range(256):
-        vocab[vocab_count] = bytes([i])
-        vocab_count += 1
+    for token in BYTE_TOKENS:
+        vocab[next_vocab_id] = token
+        next_vocab_id += 1
 
-
-    if len(vocab) >= vocab_size:
-        return vocab, merge_list
+    if next_vocab_id >= vocab_size:
+        return vocab, merges
 
     with open(input_path, encoding="utf-8") as f:
         text = f.read()
 
-    frequency_map, adjacent = tokenize_with_special(text, special_tokens)
-    
-    visited_token: set[bytes] = set(vocab.values())
-    pair_heap: list[tuple[int, bytes, bytes]] = []
-    queued_pairs: set[tuple[bytes, bytes]] = set()
+    word_frequencies = tokenize_with_special(text, special_tokens)
+    words, pair_counts, pair_to_words = _build_word_states(word_frequencies, set(special_tokens))
 
-    for token in list(visited_token):
-        _enqueue_available_pairs(
-            pair_heap,
-            queued_pairs,
-            frequency_map,
-            adjacent,
-            visited_token,
-            token,
-        )
-
-    removed_tokens: set[bytes] = set()
-    while len(vocab) < vocab_size and pair_heap:
-        token_pair = heapq.heappop(pair_heap)
-        print(token_pair)
-        _, left, right = token_pair
-
-        if left not in visited_token or right not in visited_token:
+    pair_versions: dict[TokenPair, int] = {}
+    pair_heap: list[PairHeapItem] = []
+    for pair, count in pair_counts.items():
+        if count <= 0:
             continue
-        if left in removed_tokens or right in removed_tokens:
-            continue
+        pair_versions[pair] = 1
+        heapq.heappush(pair_heap, _make_versioned_heap_item(count, pair, 1))
 
+    vocab_tokens = set(vocab.values())
+    while next_vocab_id < vocab_size:
+        best_pair = _pop_best_pair(pair_heap, pair_counts, pair_versions)
+        if best_pair is None:
+            break
+
+        left, right = best_pair
         merged_token = left + right
-        if merged_token in visited_token:
+        if merged_token in vocab_tokens:
             continue
 
-        print(f"merging {left} and {right} to {merged_token}")
+        vocab[next_vocab_id] = merged_token
+        vocab_tokens.add(merged_token)
+        next_vocab_id += 1
+        merges.append(best_pair)
 
-        vocab[vocab_count] = merged_token
-        vocab_count += 1
-        merge_list.append((left, right))
-        visited_token.add(merged_token)
+        affected_word_ids = list(pair_to_words.get(best_pair, ()))
+        changed_pairs: set[TokenPair] = set()
+        for word_id in affected_word_ids:
+            word = words[word_id]
+            new_tokens = _merge_pair_in_word(word.tokens, best_pair, merged_token)
+            if new_tokens == word.tokens:
+                continue
 
-        removed_tokens.add(left)
-        removed_tokens.add(right)
+            old_pair_counts = word.pair_counts
+            new_pair_counts = _count_adjacent_pairs(new_tokens)
+            _update_pair_statistics(
+                word_id=word_id,
+                word_frequency=word.frequency,
+                old_pair_counts=old_pair_counts,
+                new_pair_counts=new_pair_counts,
+                pair_counts=pair_counts,
+                pair_to_words=pair_to_words,
+                changed_pairs=changed_pairs,
+            )
+            word.tokens = new_tokens
+            word.pair_counts = new_pair_counts
+
+        for pair in changed_pairs:
+            _bump_pair_version(pair, pair_counts, pair_versions, pair_heap)
+
+    return vocab, merges
 
 
+def tokenize_with_special(text: str, special_tokens: list[str]) -> dict[str, int]:
+    word_frequencies: dict[str, int] = {}
+    if not special_tokens:
+        _count_base_tokens(text, word_frequencies)
+        return word_frequencies
 
-        _enqueue_available_pairs(
-            pair_heap,
-            queued_pairs,
-            frequency_map,
-            adjacent,
-            visited_token,
-            merged_token,
+    special_pattern = _build_special_token_pattern(special_tokens)
+    last_end = 0
+    for match in special_pattern.finditer(text):
+        _count_base_tokens(text[last_end : match.start()], word_frequencies)
+        token = match.group(0)
+        word_frequencies[token] = word_frequencies.get(token, 0) + 1
+        last_end = match.end()
+
+    _count_base_tokens(text[last_end:], word_frequencies)
+    return word_frequencies
+
+
+def _count_base_tokens(text: str, word_frequencies: dict[str, int]) -> None:
+    for match in regex.finditer(BASE_PATTERN, text):
+        token = match.group(0)
+        if token:
+            word_frequencies[token] = word_frequencies.get(token, 0) + 1
+
+
+def _build_special_token_pattern(special_tokens: list[str]) -> regex.Pattern[str]:
+    escaped_special_tokens = sorted(
+        (regex.escape(token) for token in special_tokens),
+        key=len,
+        reverse=True,
+    )
+    return regex.compile("|".join(escaped_special_tokens))
+
+
+def _build_word_states(
+    word_frequencies: dict[str, int],
+    special_token_set: set[str],
+) -> tuple[list[WordState], dict[TokenPair, int], dict[TokenPair, set[int]]]:
+    words: list[WordState] = []
+    pair_counts: dict[TokenPair, int] = {}
+    pair_to_words: dict[TokenPair, set[int]] = {}
+
+    for word, frequency in word_frequencies.items():
+        if word in special_token_set:
+            tokens = [word.encode("utf-8")]
+        else:
+            word_bytes = word.encode("utf-8")
+            tokens = [BYTE_TOKENS[byte] for byte in word_bytes]
+
+        local_pair_counts = _count_adjacent_pairs(tokens)
+        word_id = len(words)
+        words.append(
+            WordState(
+                frequency=frequency,
+                tokens=tokens,
+                pair_counts=local_pair_counts,
+            )
         )
 
-    return vocab, merge_list
+        if not local_pair_counts:
+            continue
+
+        for pair, occurrences in local_pair_counts.items():
+            pair_counts[pair] = pair_counts.get(pair, 0) + occurrences * frequency
+            pair_to_words.setdefault(pair, set()).add(word_id)
+
+    return words, pair_counts, pair_to_words
+
+
+def _count_adjacent_pairs(tokens: list[bytes]) -> dict[TokenPair, int]:
+    pair_counts: dict[TokenPair, int] = {}
+    for left, right in zip(tokens, tokens[1:]):
+        pair = (left, right)
+        pair_counts[pair] = pair_counts.get(pair, 0) + 1
+    return pair_counts
+
+
+def _merge_pair_in_word(
+    tokens: list[bytes],
+    pair: TokenPair,
+    merged_token: bytes,
+) -> list[bytes]:
+    merged_tokens: list[bytes] = []
+    i = 0
+    last_index = len(tokens) - 1
+    while i < len(tokens):
+        if i < last_index and tokens[i] == pair[0] and tokens[i + 1] == pair[1]:
+            merged_tokens.append(merged_token)
+            i += 2
+        else:
+            merged_tokens.append(tokens[i])
+            i += 1
+    return merged_tokens
+
+
+def _update_pair_statistics(
+    *,
+    word_id: int,
+    word_frequency: int,
+    old_pair_counts: dict[TokenPair, int],
+    new_pair_counts: dict[TokenPair, int],
+    pair_counts: dict[TokenPair, int],
+    pair_to_words: dict[TokenPair, set[int]],
+    changed_pairs: set[TokenPair],
+) -> None:
+    for pair in old_pair_counts.keys() | new_pair_counts.keys():
+        old_count = old_pair_counts.get(pair, 0)
+        new_count = new_pair_counts.get(pair, 0)
+        if old_count == new_count:
+            continue
+
+        if old_count == 0:
+            pair_to_words.setdefault(pair, set()).add(word_id)
+        elif new_count == 0:
+            linked_words = pair_to_words.get(pair)
+            if linked_words is not None:
+                linked_words.discard(word_id)
+                if not linked_words:
+                    pair_to_words.pop(pair, None)
+
+        updated_count = pair_counts.get(pair, 0) + (new_count - old_count) * word_frequency
+        if updated_count > 0:
+            pair_counts[pair] = updated_count
+        else:
+            pair_counts.pop(pair, None)
+
+        changed_pairs.add(pair)
+
+
+def _bump_pair_version(
+    pair: TokenPair,
+    pair_counts: dict[TokenPair, int],
+    pair_versions: dict[TokenPair, int],
+    pair_heap: list[PairHeapItem],
+) -> None:
+    version = pair_versions.get(pair, 0) + 1
+    pair_versions[pair] = version
+    count = pair_counts.get(pair, 0)
+    if count > 0:
+        heapq.heappush(pair_heap, _make_versioned_heap_item(count, pair, version))
+
+
+def _make_versioned_heap_item(
+    count: int,
+    pair: TokenPair,
+    version: int,
+) -> PairHeapItem:
+    return (-count, ReverseBytes(pair[0]), ReverseBytes(pair[1]), pair[0], pair[1], version)
+
+
+def _pop_best_pair(
+    pair_heap: list[PairHeapItem],
+    pair_counts: dict[TokenPair, int],
+    pair_versions: dict[TokenPair, int],
+) -> TokenPair | None:
+    while pair_heap:
+        neg_count, _, _, left, right, version = heapq.heappop(pair_heap)
+        pair = (left, right)
+        current_version = pair_versions.get(pair)
+        current_count = pair_counts.get(pair, 0)
+        if current_version != version:
+            continue
+        if current_count <= 0:
+            continue
+        if -neg_count != current_count:
+            continue
+        return pair
+    return None
 
 
 def _enqueue_available_pairs(
     pair_heap: list[tuple[int, bytes, bytes]],
     queued_pairs: set[tuple[bytes, bytes]],
-    frequency_map: dict[Any, int],
+    frequency_map: dict[object, int],
     adjacent: dict[bytes, dict[str, set[bytes]]],
     visited_token: set[bytes],
     token: bytes,
@@ -133,7 +302,7 @@ def _enqueue_available_pairs(
 def _push_pair_candidate(
     pair_heap: list[tuple[int, bytes, bytes]],
     queued_pairs: set[tuple[bytes, bytes]],
-    frequency_map: dict[Any, int],
+    frequency_map: dict[object, int],
     left: bytes,
     right: bytes,
 ) -> None:
@@ -150,85 +319,4 @@ def _push_pair_candidate(
 
 
 def _make_pair_heap_item(count: int, left: bytes, right: bytes) -> tuple[int, bytes, bytes]:
-    # Max frequency first; ties break by lexicographic order of the token pair.
     return (-count, left, right)
-
-
-def tokenize_with_special(
-    text,
-    special_tokens: list[str],
-) -> tuple[dict[bytes, int], dict[bytes, dict[str, set[bytes]]]]:
-    """支持 special token 的分词函数"""
-    # PAT = rf"{special_patterns}|'(?:[sdmt]|ll|ve|re)| ?\p{{L}}+| ?\p{{N}}+| ?[^\s\p{{L}}\p{{N}}]+|\s+(?!\S)|\s+"
-    PAT = r"""'(?:[sdmt]|ll|ve|re)|\s?\p{L}+|\s?\p{N}+|\s?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
-    if len(special_tokens) > 0:
-        special_patterns = "|".join(special_tokens)
-        PAT = special_patterns + "|" + PAT
-    tokens = regex.findall(PAT, text, regex.VERBOSE)
-
-    # print(tokens)
-
-    return get_all_token_pair(tokens, special_tokens)
-
-TokenPair = tuple[bytes, bytes]
-
-def _init_adjacent_entry(adjacent: dict[bytes, dict[str, set[bytes]]], token: bytes) -> None:
-    if token not in adjacent:
-        adjacent[token] = {"left": set(), "right": set()}
-
-
-def get_all_token_pair(
-    tokens: list[str],
-    special_tokens: set[str],
-) -> tuple[dict[TokenPair, int], dict[bytes, dict[str, set[bytes]]]]:
-    token_map: dict[str, int] = dict()
-    res: dict[TokenPair, int] = dict()
-    adjacent: dict[bytes, dict[str, set[bytes]]] = dict()
-
-    # 统计token频率
-    for token in tokens:
-        if len(token) == 0:
-            continue
-        token_map[token] = token_map.get(token, 0) + 1
-
-    # 处理每个token
-    for token, frequency in token_map.items():
-        token_bytes = token.encode(encoding="utf-8")
-        # 添加整个token        
-        if token in special_tokens:
-            res[token_bytes] = res.get(token_bytes, 0) + frequency
-            continue
-        
-        # 生成所有可能的子串
-        token_len = len(token_bytes)
-        for window_size in range(1, token_len + 1):  # 从2到完整长度
-            i = 0
-            while i + window_size <= token_len:
-
-                j = i + 1
-                # 生成所有可能的左右相邻子串对
-                while j < i + window_size:
-                    # 左子串
-                    left = token_bytes[i:j]
-                    # 右子串
-                    right = token_bytes[j:i+window_size]
-                    res[(left, right)] = res.get((left, right), 0) + frequency
-
-
-                    # print("token:{}, i:{}, j:{}, left:{}, right:{}".format(token, i, j, left, right))
-                    
-                    # 添加相邻关系
-                    _init_adjacent_entry(adjacent, left)
-                    _init_adjacent_entry(adjacent, right)
-                    adjacent[left]["right"].add(right)
-                    adjacent[right]["left"].add(left)
-                    
-                    j += 1
-                i += 1
-
-    print(token_map)
-
-    print("res:", res)
-    print("adjacent:", adjacent)
-
-    return [res, adjacent]
