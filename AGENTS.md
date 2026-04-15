@@ -10,7 +10,8 @@ uv run <python_file_path>
 
 ### Run unit tests
 
-Don't directly run test in tests folder, first run simple in unit_tests folder to valid the implementation.
+Don't directly run test in tests folder
+Only run simple test in unit_tests folder to valid the implementation.
 
 
 ### Test final result
