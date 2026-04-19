@@ -114,7 +114,7 @@ def tokenize_with_special(text: str, special_tokens: list[str]) -> dict[str, int
         _count_base_tokens(text, word_frequencies)
         return word_frequencies
 
-    special_pattern = _build_special_token_pattern(special_tokens)
+    special_pattern = build_special_token_pattern(special_tokens)
     last_end = 0
     for match in special_pattern.finditer(text):
         _count_base_tokens(text[last_end : match.start()], word_frequencies)
@@ -133,7 +133,7 @@ def _count_base_tokens(text: str, word_frequencies: dict[str, int]) -> None:
             word_frequencies[token] = word_frequencies.get(token, 0) + 1
 
 
-def _build_special_token_pattern(special_tokens: list[str]) -> regex.Pattern[str]:
+def build_special_token_pattern(special_tokens: list[str]) -> regex.Pattern[str]:
     escaped_special_tokens = sorted(
         (regex.escape(token) for token in special_tokens),
         key=len,
