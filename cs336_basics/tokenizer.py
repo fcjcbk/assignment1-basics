@@ -24,7 +24,11 @@ class Tokenizer:
             merge_map.setdefault(merge[0], set()).add(merge[1])
         self.merge_map = merge_map
 
-        
+        merge_priority: dict[tuple[bytes, bytes], int] = {}
+        for i, merge in enumerate(merges):
+            merge_priority[merge] = i
+        self.merge_priority = merge_priority
+
 
     def from_files(
         cls,
@@ -44,16 +48,17 @@ class Tokenizer:
         #     merges,
         #     special_tokens,
         # )
-        pass
+        NotImplementedError
     
     def encode_iterable(
         self,
         iterable: Iterable[str],
     ) -> Iterable[int]:
         """
-        Encode a list of strings to a list of lists of tokens.
+        Encode an iterable of strings and yield token ids one by one.
         """
-        return (self.encode(text) for text in iterable)
+        for text in iterable:
+            yield from self.encode(text)
     
     def decode(
         self,
@@ -62,10 +67,11 @@ class Tokenizer:
         """
         Decode a list of tokens to a string.
         """
-        decoded_text = ""
-        for token in tokens:
-            decoded_text += self.vocab[token].decode("utf-8")
-        return decoded_text
+        token_bytes = b"".join(self.vocab[token] for token in tokens)
+        try:
+            return token_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            return token_bytes.decode("utf-8", errors="replace")
 
 
     def encode(
@@ -82,9 +88,12 @@ class Tokenizer:
         tokens = []
         last_end = 0
         for match in self.special_pattern.finditer(text):
-            tokens = tokens + self.encode_without_special_tokens(text[last_end : match.start()])
+            t = text[last_end : match.start()]
+            # print("encode single token: [{}]".format(t))
+            if len(t) > 0:
+                tokens = tokens + self.encode_without_special_tokens(t)
             token = match.group(0)
-            tokens = tokens + self.reverse_vocab[token.encode("utf-8")]
+            tokens.append(self.reverse_vocab[token.encode("utf-8")])
             last_end = match.end()
         tokens = tokens + self.encode_without_special_tokens(text[last_end:])
         return tokens
@@ -113,27 +122,44 @@ class Tokenizer:
         """
         Encode a single token to a list of tokens.
         """
+
+        # print("token: [{}]".format(token))
         token_bytes = token.encode("utf-8")
         merged_tokens: list[bytes] = [bpe.BYTE_TOKENS[byte] for byte in token_bytes]
 
-        has_merged = True
-        while (has_merged):
-            has_merged = False
-            new_merged_tokens: list[bytes] = []
-            i = 1
-            left = merged_tokens[0]
-            while i < len(merged_tokens):
-                right = merged_tokens[i]
+        while (True):
+            min_priority = len(self.merges)
+            min_merge = None
+            for i in range(len(merged_tokens) - 1):
+                left = merged_tokens[i]
+                right = merged_tokens[i + 1]
+                # print("left: [{}]".format(left))
+                # print("right: [{}]".format(right))
+                # print("merge_map left: ", self.merge_map.get(left, set()))
 
-                if left in self.merge_map and right in self.merge_map[left]:
-                    left = left + right
-                else:
-                    new_merged_tokens.append(left)
-                    left = right
+                if not (left in self.merge_map) or not (right in self.merge_map[left]):
+                    continue
+                
+                priority = self.merge_priority[(left, right)]
+                if priority < min_priority:
+                    min_priority = priority
+                    min_merge = (left, right)
+            
+            # print("min_merge: [{}], min_priority: {}".format(min_merge, min_priority))
+            if min_merge is None:
+                break
+            new_merged_tokens = []
+            i = 0
+            while i < len(merged_tokens):
+                if i< len(merged_tokens) - 1 and merged_tokens[i] == min_merge[0] and merged_tokens[i + 1] == min_merge[1]:
+                    new_merged_tokens.append(min_merge[0] + min_merge[1])
+                    # print("merge: [{}]".format(min_merge))
+                    i += 2
+                    continue
+                new_merged_tokens.append(merged_tokens[i])
                 i += 1
-            new_merged_tokens.append(left)
+            # print("merged_tokens: [{}]".format(new_merged_tokens))
             merged_tokens = new_merged_tokens
-        
         return [self.reverse_vocab[t] for t in merged_tokens]
 
 

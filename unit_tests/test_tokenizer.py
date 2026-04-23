@@ -72,3 +72,44 @@ def test_decode_combines_bytes_before_utf8_decoding():
     )
 
     assert tokenizer.decode([0, 1, 2]) == "🙃"
+
+def test_encode_token_with_sequence():
+    tokenizer = Tokenizer(
+        vocab={
+            0: b' ',
+            1: b'a',
+            2: b' a',
+            3: b'r',
+            4: b't',
+            5: b'rt',
+            6: b' ar',
+            7: b' art',
+
+        },
+        merges=[
+            (b' ', b'a'),
+            (b'r', b't'),
+            (b' a', b'rt'),
+            (b' a', b'r'),
+        ],
+        special_tokens=None,
+    )
+
+    res = tokenizer.encode(" art")
+    assert res == [7]
+
+
+def test_encode_iterable_yields_token_ids_one_by_one():
+    tokenizer = Tokenizer(
+        vocab={
+            0: b"",
+            1: b"a",
+            2: b"b",
+            3: b"c",
+        },
+        merges=[],
+        special_tokens=None,
+    )
+
+    res = list(tokenizer.encode_iterable(["ab", "c"]))
+    assert res == [1, 2, 3]
