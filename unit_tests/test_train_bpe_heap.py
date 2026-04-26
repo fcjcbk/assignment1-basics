@@ -1,4 +1,4 @@
-from cs336_basics.bpe import _enqueue_available_pairs, train_bpe
+from cs336_basics.tokenizer.bpe import _enqueue_available_pairs, train_bpe
 
 
 def test_enqueue_available_pairs_respects_neighbor_side():
