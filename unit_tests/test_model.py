@@ -1,4 +1,5 @@
 import torch
+from torch import nn
 
 from cs336_basics.model.linear import Linear
 
@@ -17,9 +18,13 @@ def test_linear_matches_matrix_multiply_for_batched_inputs():
         ]
     )
 
-    layer = Linear(d_in=3, d_out=2, weights=weights)
-    actual = layer.forward(x)
+    layer = Linear(3, 2)
+    layer.weight = nn.Parameter(weights)
+       
+    actual = layer(x)
     expected = x @ weights.T
 
+    # print("actual:", actual)
+    # print("expected:", expected)
     torch.testing.assert_close(actual, expected)
     assert actual.shape == (2, 2, 2)
