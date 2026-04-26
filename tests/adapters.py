@@ -14,6 +14,9 @@ import cs336_basics.tokenizer.bpe as bpe
 import cs336_basics.tokenizer.tokenizer as tokenizer
 import cs336_basics.model.linear as linear
 import cs336_basics.model.embedding as embedding
+import cs336_basics.model.rms_norm as rms_norm
+
+
 
 def run_linear(
     d_in: int,
@@ -34,7 +37,7 @@ def run_linear(
         Float[Tensor, "... d_out"]: The transformed output of your linear module.
     """
     linear_layer = linear.Linear(d_in, d_out)
-    linear_layer.weight = nn.Parameter(weights)
+    linear_layer.weight.data = weights
     return linear_layer(in_features)
 
 
@@ -387,7 +390,9 @@ def run_rmsnorm(
         Float[Tensor,"... d_model"]: Tensor of with the same shape as `in_features` with the output of running
         RMSNorm of the `in_features`.
     """
-    raise NotImplementedError
+    rmsnorm = rms_norm.RMSNorm(d_model, eps)
+    rmsnorm.weight.data = weights
+    return rmsnorm(in_features)
 
 
 def run_silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
