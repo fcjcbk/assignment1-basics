@@ -15,6 +15,8 @@ import cs336_basics.tokenizer.tokenizer as tokenizer
 import cs336_basics.model.linear as linear
 import cs336_basics.model.embedding as embedding
 import cs336_basics.model.rms_norm as rms_norm
+import cs336_basics.model.swi_glu as swi_glu
+import cs336_basics.model.funtional as functional
 
 
 
@@ -95,7 +97,13 @@ def run_swiglu(
     # swiglu.w1.weight.data = w1_weight
     # swiglu.w2.weight.data = w2_weight
     # swiglu.w3.weight.data = w3_weight
-    raise NotImplementedError
+    swiglu_layer = swi_glu.SwiGLu(d_model)
+    swiglu_layer.d_ff = d_ff
+    swiglu_layer.w_1.weight.data = w1_weight
+    swiglu_layer.w_2.weight.data = w2_weight
+    swiglu_layer.w_3.weight.data = w3_weight
+    return swiglu_layer(in_features)
+
 
 
 def run_scaled_dot_product_attention(
@@ -150,6 +158,7 @@ def run_multihead_self_attention(
         Float[Tensor, " ... sequence_length d_model"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
+
     raise NotImplementedError
 
 
@@ -406,7 +415,7 @@ def run_silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
         Float[Tensor,"..."]: of with the same shape as `in_features` with the output of applying
         SiLU to each element.
     """
-    raise NotImplementedError
+    return functional.silu(in_features)
 
 
 def run_get_batch(
