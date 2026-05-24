@@ -213,13 +213,13 @@ def run_multihead_self_attention_with_rope(
     """
 
 
-    multi_head = multihead_self_attention.MultiHeadSelfAttention(d_model, num_heads, max_seq_len)
+    multi_head = multihead_self_attention.MultiHeadSelfAttentionWithRoPE(d_model, num_heads, max_seq_len, theta)
     multi_head.WQ.weight.data = q_proj_weight
     multi_head.WK.weight.data = k_proj_weight
     multi_head.WV.weight.data = v_proj_weight
     multi_head.WO.weight.data = o_proj_weight
 
-    return multi_head(in_features)
+    return multi_head(in_features, token_positions)
 
 
 def run_rope(
