@@ -3,6 +3,7 @@ from torch import nn
 import einx
 
 from cs336_basics.model.linear import Linear
+from cs336_basics.model import funtional
 
 
 def test_linear_matches_matrix_multiply_for_batched_inputs():
@@ -44,3 +45,24 @@ def reverse_pairs_last_dim(x):
     *batch, L = x.shape
     assert L % 2 == 0, "最后一维长度必须是偶数"
     return x.view(*batch, L // 2, 2).flip(-1).reshape(*batch, L)
+
+
+def test_soft_max():
+    t = torch.tensor([
+        [[1, 2, 3], [3, 4, 5]],
+        [[5, 6, 7], [7, 8, 9]],
+        [[9, 10, 11], [11, 12, 13]]
+        ]).float()
+    m = nn.Softmax(dim=1)
+    # print("expected: ", m(t))
+    print("actual: ", funtional.softmax(t, 0))
+    expected = m(t)
+    actual = funtional.softmax(t, 1)
+    torch.testing.assert_close(actual, expected)
+
+    # torch.max()
+    print("shape: ", t.shape)
+    print("max: ", t.max(0, keepdim=True))
+    print("sum: ", t.sum(0, keepdim=True))
+    # print("max1: ", t.max(1, keepdim=True))
+    # print("max2: ", t.max(2, keepdim=True))
