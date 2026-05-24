@@ -17,6 +17,7 @@ import cs336_basics.model.embedding as embedding
 import cs336_basics.model.rms_norm as rms_norm
 import cs336_basics.model.swi_glu as swi_glu
 import cs336_basics.model.funtional as functional
+import cs336_basics.model.rope as rope
 
 
 
@@ -221,7 +222,8 @@ def run_rope(
     Returns:
         Float[Tensor, " ... sequence_length d_k"]: Tensor with RoPEd input.
     """
-    raise NotImplementedError
+    model = rope.RoPE(theta, d_k, max_seq_len)
+    return model(in_query_or_key, token_positions)
 
 
 def run_transformer_block(
