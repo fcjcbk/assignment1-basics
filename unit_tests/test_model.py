@@ -66,3 +66,7 @@ def test_soft_max():
     print("sum: ", t.sum(0, keepdim=True))
     # print("max1: ", t.max(1, keepdim=True))
     # print("max2: ", t.max(2, keepdim=True))
+
+
+def test_attention():
+    ...
