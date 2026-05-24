@@ -15,7 +15,7 @@ class RoPE(nn.Module):
 
         j = torch.arange(0, d_k, 2, device=device).float()
         freqs = 1.0 / (theta ** (j / d_k))
-        self.register_buffer("freqs", freqs)
+        self.register_buffer("freqs", freqs, persistent=False)
 
     def forward(
         self,
