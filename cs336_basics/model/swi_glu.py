@@ -8,6 +8,7 @@ import cs336_basics.model.funtional as functional
 class SwiGLu(nn.Module):
     def __init__(self,
         d_model: int,
+        d_ff: int | None = None,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None
     ):
@@ -15,8 +16,11 @@ class SwiGLu(nn.Module):
         self.d_model = d_model
         self.device = device
         self.dtype = dtype
+        self.d_ff = d_ff
 
-        self.d_ff = int(((d_model * 8 / 3) + 63) // 64 * 64) 
+        if d_ff is None:
+            self.d_ff = int(((d_model * 8 / 3) + 63) // 64 * 64) 
+
         self.w_1 = Linear(d_model, self.d_ff, device, dtype)
         self.w_2 = Linear(self.d_ff, d_model, device, dtype)
         self.w_3 = Linear(d_model, d_model, device, dtype)

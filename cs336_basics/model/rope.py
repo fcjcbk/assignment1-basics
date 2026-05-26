@@ -17,11 +17,25 @@ class RoPE(nn.Module):
         freqs = 1.0 / (theta ** (j / d_k))
         self.register_buffer("freqs", freqs, persistent=False)
 
+    def _get_token_positions(
+        self,
+        x: torch.Tensor,
+        token_positions: torch.Tensor | None,
+    ) -> torch.Tensor:
+        if token_positions is not None:
+            return token_positions
+
+        seq_len = x.shape[-2]
+        prefix_shape = x.shape[:-2]
+        positions = torch.arange(seq_len, device=x.device)
+        return positions.view(*([1] * len(prefix_shape)), seq_len).expand(*prefix_shape, seq_len)
+
     def forward(
         self,
         x: torch.Tensor,
-        token_positions: torch.Tensor,
+        token_positions: torch.Tensor | None = None,
     ) -> torch.Tensor:
+        token_positions = self._get_token_positions(x, token_positions)
         positions = token_positions.unsqueeze(-1).float()
         angles = positions * self.freqs
         cos = angles.cos()
@@ -53,14 +67,28 @@ class RoPE_1(nn.Module):
         freqs = 1.0 / (theta ** (2 * j / d_k))
         self.register_buffer("freqs", freqs)
 
+    def _get_token_positions(
+        self,
+        x: torch.Tensor,
+        token_positions: torch.Tensor | None,
+    ) -> torch.Tensor:
+        if token_positions is not None:
+            return token_positions
+
+        seq_len = x.shape[-2]
+        prefix_shape = x.shape[:-2]
+        positions = torch.arange(seq_len, device=x.device)
+        return positions.view(*([1] * len(prefix_shape)), seq_len).expand(*prefix_shape, seq_len)
+
     def forward(
         self,
         x: torch.Tensor,                # shape of (..., seq_len, d_k)
-        token_positions: torch.Tensor   # a tensor of shape (..., seq_len)
+        token_positions: torch.Tensor | None = None,   # a tensor of shape (..., seq_len)
     ) -> torch.Tensor:
         if x.shape[-1] % 2 != 0:
             raise ValueError(f"Expected an even last dimension for RoPE, got {x.shape[-1]}")
 
+        token_positions = self._get_token_positions(x, token_positions)
         positions = token_positions.unsqueeze(-1).to(dtype=self.freqs.dtype)
         angles = positions * self.freqs
         cos = angles.cos().to(dtype=x.dtype)

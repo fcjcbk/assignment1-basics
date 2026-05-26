@@ -112,7 +112,7 @@ class MultiHeadSelfAttentionWithRoPE(nn.Module):
     def forward(
         self,
         in_features: Float[Tensor, " ... sequence_length d_model"],
-        token_positions: Int[Tensor, " ... sequence_length"] | None, # Optional tensor with the positions of the tokens
+        token_positions: Int[Tensor, " ... sequence_length"] | None = None, # Optional tensor with the positions of the tokens
     ) -> Float[Tensor, " ... sequence_length d_model"]:
         prefix_shape = in_features.shape[:-2]  # 例如 (batch, heads) 或 (batch,)
         seq_len = in_features.shape[-2]

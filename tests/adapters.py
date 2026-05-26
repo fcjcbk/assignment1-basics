@@ -19,6 +19,7 @@ import cs336_basics.model.swi_glu as swi_glu
 import cs336_basics.model.funtional as functional
 import cs336_basics.model.rope as rope
 import cs336_basics.model.multihead_self_attention as multihead_self_attention
+import cs336_basics.model.transformer as transformer
 
 
 
@@ -315,7 +316,28 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
-    raise NotImplementedError
+    tf = transformer.Transformer(
+        d_model,
+        num_heads,
+        max_seq_len,
+        theta,
+        d_ff,
+    )
+
+    tf.multi_head_self_attenttion.WQ.weight.data = weights['attn.q_proj.weight']
+    tf.multi_head_self_attenttion.WK.weight.data = weights['attn.k_proj.weight']
+    tf.multi_head_self_attenttion.WV.weight.data = weights['attn.v_proj.weight']
+    tf.multi_head_self_attenttion.WO.weight.data = weights['attn.output_proj.weight']
+
+    tf.rms_1.weight.data = weights['ln1.weight']
+    tf.rms_2.weight.data = weights['ln2.weight']
+
+    tf.ffn.w_1.weight.data = weights['ffn.w1.weight']
+    tf.ffn.w_2.weight.data = weights['ffn.w2.weight']
+    tf.ffn.w_3.weight.data = weights['ffn.w3.weight']
+
+
+    return tf(in_features)
 
 
 def run_transformer_lm(
