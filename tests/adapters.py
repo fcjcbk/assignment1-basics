@@ -20,6 +20,7 @@ import cs336_basics.model.funtional as functional
 import cs336_basics.model.rope as rope
 import cs336_basics.model.multihead_self_attention as multihead_self_attention
 import cs336_basics.model.transformer as transformer
+from cs336_basics.model.transformer_language_model import TransformerLanguageModel
 
 
 
@@ -419,7 +420,43 @@ def run_transformer_lm(
         Float[Tensor, "batch_size sequence_length vocab_size"]: Tensor with the predicted unnormalized
         next-word distribution for each token.
     """
-    raise NotImplementedError
+    tf = TransformerLanguageModel(
+        vocab_size,
+        context_length,
+        num_layers,
+        d_model,
+        num_heads,
+        context_length,
+        rope_theta,
+        d_ff,
+    )
+
+    tf.embedding.weight.data = weights["token_embeddings.weight"]
+
+    for layer_idx, block in enumerate(tf.tranformer_blocks):
+        prefix = f"layers.{layer_idx}"
+
+        block.multi_head_self_attenttion.WQ.weight.data = weights[f"{prefix}.attn.q_proj.weight"]
+        block.multi_head_self_attenttion.WK.weight.data = weights[f"{prefix}.attn.k_proj.weight"]
+        block.multi_head_self_attenttion.WV.weight.data = weights[f"{prefix}.attn.v_proj.weight"]
+        block.multi_head_self_attenttion.WO.weight.data = weights[f"{prefix}.attn.output_proj.weight"]
+
+        block.rms_1.weight.data = weights[f"{prefix}.ln1.weight"]
+        block.rms_2.weight.data = weights[f"{prefix}.ln2.weight"]
+
+        block.ffn.w_1.weight.data = weights[f"{prefix}.ffn.w1.weight"]
+        block.ffn.w_2.weight.data = weights[f"{prefix}.ffn.w2.weight"]
+        block.ffn.w_3.weight.data = weights[f"{prefix}.ffn.w3.weight"]
+
+    tf.norm.weight.data = weights["ln_final.weight"]
+    tf.linear.weight.data = weights["lm_head.weight"]
+
+    return tf(in_indices)
+    # hidden_states = tf.embedding(in_indices)
+    # for block in tf.tranformer_blocks:
+    #     hidden_states = block(hidden_states)
+
+    # return tf.linear(tf.norm(hidden_states))
 
 
 def run_rmsnorm(
