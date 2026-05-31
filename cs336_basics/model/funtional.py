@@ -1,7 +1,7 @@
 from torch import Tensor
 import torch
 import einx
-from jaxtyping import Float, Bool
+from jaxtyping import Float, Bool, Int
 import math
 import cs336_basics.model.funtional as functional
 
@@ -56,3 +56,26 @@ def attention(
     
     soft_max_qk = functional.softmax(qk, -1)
     return einx.dot("... queries [keys], ... [keys] d_v -> ... queries d_v", soft_max_qk, V)
+
+def cross_entropy(
+    inputs: Float[Tensor, " batch_size vocab_size"],
+    targets: Int[Tensor, " batch_size"]
+) -> Float[Tensor, ""]:
+    """Given a tensor of inputs and targets, compute the average cross-entropy
+    loss across examples.
+
+    Args:
+        inputs (Float[Tensor, "batch_size vocab_size"]): inputs[i][j] is the
+            unnormalized logit of jth class for the ith example.
+        targets (Int[Tensor, "batch_size"]): Tensor of shape (batch_size,) with the index of the correct class.
+            Each value must be between 0 and `num_classes - 1`.
+
+    Returns:
+        Float[Tensor, ""]: The average cross-entropy loss across examples.
+    """
+    # Stabilize the logits before taking exponentials so large positive values
+    # do not overflow and very small probabilities do not underflow to zero.
+    shifted = inputs - inputs.max(dim=-1, keepdim=True).values
+    log_sum_exp = shifted.exp().sum(dim=-1).log()
+    nll = log_sum_exp - shifted.gather(1, targets.unsqueeze(1)).squeeze(1)
+    return nll.mean()
