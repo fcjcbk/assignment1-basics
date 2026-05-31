@@ -1,5 +1,6 @@
 from torch import nn
 from torch import Tensor
+from jaxtyping import Bool, Float, Int
 import torch
 import einx
 from cs336_basics.model.linear import Linear
@@ -25,7 +26,9 @@ class SwiGLu(nn.Module):
         self.w_2 = Linear(self.d_ff, d_model, device, dtype)
         self.w_3 = Linear(d_model, d_model, device, dtype)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, x: Float[Tensor, "... d_model"]
+    ) -> torch.Tensor:
         silu = functional.silu(self.w_1(x))
 
         return self.w_2(silu * self.w_3(x))

@@ -1,12 +1,14 @@
 from torch import nn
 import torch
+from torch import Tensor
+from jaxtyping import Bool, Float, Int
 
 
 class RoPE(nn.Module):
     def __init__(
         self,
         theta: float,
-        d_k: int,
+        d_k: int,                           # dimension of query and key vector
         max_seq_len: int,
         device: torch.device | None = None,
     ):
@@ -19,8 +21,8 @@ class RoPE(nn.Module):
 
     def _get_token_positions(
         self,
-        x: torch.Tensor,
-        token_positions: torch.Tensor | None,
+        x: Float[Tensor, " ... sequence_length d_k"],
+        token_positions: Int[Tensor, " ... sequence_length"] | None,
     ) -> torch.Tensor:
         if token_positions is not None:
             return token_positions
@@ -32,9 +34,9 @@ class RoPE(nn.Module):
 
     def forward(
         self,
-        x: torch.Tensor,
-        token_positions: torch.Tensor | None = None,
-    ) -> torch.Tensor:
+        x: Float[Tensor, " ... sequence_length d_k"],
+        token_positions: Int[Tensor, " ... sequence_length"] | None,
+    ) -> Float[Tensor, " ... sequence_length d_k"]:
         token_positions = self._get_token_positions(x, token_positions)
         positions = token_positions.unsqueeze(-1).float()
         angles = positions * self.freqs

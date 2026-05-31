@@ -1,5 +1,6 @@
 from torch import nn
 from torch import Tensor
+from jaxtyping import Bool, Float, Int
 import torch
 import einx
 
@@ -16,7 +17,10 @@ class RMSNorm(nn.Module):
 
         self.weight = nn.Parameter(torch.ones(d_model, device=device, dtype=dtype))
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: Float[Tensor, " batch_size sequence_length d_model"],
+    ) -> torch.Tensor:
         in_dtype = x.dtype
         x = x.to(torch.float32)
 
