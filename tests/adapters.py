@@ -20,6 +20,7 @@ import cs336_basics.model.funtional as functional
 import cs336_basics.model.rope as rope
 import cs336_basics.model.multihead_self_attention as multihead_self_attention
 import cs336_basics.model.transformer as transformer
+import cs336_basics.model.optimizer
 from cs336_basics.model.transformer_language_model import TransformerLanguageModel
 
 
@@ -571,7 +572,7 @@ def get_adamw_cls() -> Any:
     """
     Returns a torch.optim.Optimizer that implements AdamW.
     """
-    raise NotImplementedError
+    return cs336_basics.model.optimizer.AdamW
 
 
 def run_get_lr_cosine_schedule(
