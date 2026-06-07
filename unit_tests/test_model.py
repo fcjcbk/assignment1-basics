@@ -3,6 +3,7 @@ from torch import nn
 import einx
 import numpy
 import torch.nn.functional as F
+import random
 
 from cs336_basics.model.linear import Linear
 from cs336_basics.model import funtional
@@ -115,3 +116,23 @@ def test_cross_entropy_is_stable_for_large_logits():
     assert torch.isfinite(actual)
     expected = F.cross_entropy(inputs, targets)
     torch.testing.assert_close(actual, expected)
+
+
+def test_sample_train_data_returns_shifted_long_tensors_on_device():
+    dataset = numpy.arange(20, dtype=numpy.int64)
+
+    random.seed(0)
+    inputs, labels = funtional.sample_train_data(
+        dataset=dataset,
+        batch_size=3,
+        context_length=4,
+        device="cpu",
+    )
+
+    assert inputs.dtype == torch.long
+    assert labels.dtype == torch.long
+    assert inputs.device.type == "cpu"
+    assert labels.device.type == "cpu"
+    assert inputs.shape == (3, 4)
+    assert labels.shape == (3, 4)
+    torch.testing.assert_close(labels, inputs + 1)

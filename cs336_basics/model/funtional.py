@@ -5,6 +5,9 @@ from jaxtyping import Float, Bool, Int
 import math
 from collections.abc import Iterable
 import cs336_basics.model.funtional as functional
+import numpy.typing as npt
+import random
+import numpy as np
 
 
 def silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
@@ -152,3 +155,36 @@ def gradient_clipping(
             if param.grad is None:
                 continue
             param.grad.data.mul_(scal)
+
+def sample_train_data(
+    dataset: npt.NDArray, batch_size: int, context_length: int, device: str
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Given a dataset (a 1D numpy array of integers) and a desired batch size and
+    context length, sample language modeling input sequences and their corresponding
+    labels from the dataset.
+
+    Args:
+        dataset (np.array): 1D numpy array of integer token IDs in the dataset.
+        batch_size (int): Desired batch size to sample.
+        context_length (int): Desired context length of each sampled example.
+        device (str): PyTorch device string (e.g., 'cpu' or 'cuda:0') indicating the device
+            to place the sampled input sequences and labels on.
+
+    Returns:
+        Tuple of torch.LongTensors of shape (batch_size, context_length). The first tuple item
+        is the sampled input sequences, and the second tuple item is the corresponding
+        language modeling labels.
+    """
+    
+    inputs = []
+    labels = []
+
+    for _ in range(batch_size):
+        start_index = random.randint(0, len(dataset) - context_length - 1)
+        inputs.append(dataset[start_index : start_index + context_length])
+        labels.append(dataset[start_index + 1 : start_index + 1 + context_length])
+
+    inputs_tensor = torch.tensor(np.stack(inputs), dtype=torch.long, device=device)
+    labels_tensor = torch.tensor(np.stack(labels), dtype=torch.long, device=device)
+    return inputs_tensor, labels_tensor
