@@ -42,7 +42,7 @@ class AdamW(torch.optim.Optimizer):
             beta1, beta2 = group["betas"]
             eps = group["eps"]
             weight_decay = group["weight_decay"]
-        for i, p in enumerate(group["params"]):
+        for p in group["params"]:
             if p.grad is None:
                 continue
             state = self.state[p] # Get state associated with p.
