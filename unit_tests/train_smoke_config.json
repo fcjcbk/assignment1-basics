@@ -1,0 +1,33 @@
+{
+  "model": {
+    "vocab_size": 32,
+    "context_length": 8,
+    "num_layers": 1,
+    "d_model": 16,
+    "num_heads": 4,
+    "max_seq_len": 8,
+    "theta": 10000.0,
+    "d_ff": 32
+  },
+  "optimizer": {
+    "learning_rate": 0.001,
+    "min_learning_rate": 0.0001,
+    "warmup_iters": 1,
+    "max_grad_norm": 1.0
+  },
+  "data": {
+    "synthetic_num_tokens": 128
+  },
+  "checkpoint": {
+    "path": "unit_tests/tmp_train_checkpoint.pt",
+    "save_interval": 1
+  },
+  "logging": {
+    "log_interval": 1,
+    "log_file": "unit_tests/tmp_train.log"
+  },
+  "batch_size": 2,
+  "total_steps": 2,
+  "device": "cpu",
+  "seed": 1337
+}

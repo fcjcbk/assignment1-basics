@@ -50,7 +50,9 @@ class TransformerLanguageModel(nn.Module):
 
         self.linear = Linear(
             d_model,
-            vocab_size
+            vocab_size,
+            device,
+            dtype,
         )
 
 

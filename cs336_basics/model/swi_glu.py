@@ -24,7 +24,7 @@ class SwiGLu(nn.Module):
 
         self.w_1 = Linear(d_model, self.d_ff, device, dtype)
         self.w_2 = Linear(self.d_ff, d_model, device, dtype)
-        self.w_3 = Linear(d_model, d_model, device, dtype)
+        self.w_3 = Linear(d_model, self.d_ff, device, dtype)
 
     def forward(
         self, x: Float[Tensor, "... d_model"]

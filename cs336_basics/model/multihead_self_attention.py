@@ -34,7 +34,6 @@ class MultiHeadSelfAttention(nn.Module):
         self,
         in_features: Float[Tensor, " ... sequence_length d_model"],
     ) -> Float[Tensor, " ... sequence_length d_model"]:
-        prefix_shape = in_features.shape[:-2]  # 例如 (batch, heads) 或 (batch,)
         seq_len = in_features.shape[-2]
 
         # 1. get q k v
@@ -67,9 +66,8 @@ class MultiHeadSelfAttention(nn.Module):
             backend='torch'  # 关键：指定后端
         )
 
-        causal_mask = ~torch.triu(torch.ones(seq_len, seq_len, dtype=torch.bool), diagonal=1)
-        target_shape = prefix_shape + (seq_len, seq_len)
-        causal_mask = causal_mask.broadcast_to(target_shape)
+        causal_mask = torch.ones(seq_len, seq_len, dtype=torch.bool, device=in_features.device).tril()
+        causal_mask = causal_mask.view(*([1] * (q_heads.ndim - 2)), seq_len, seq_len)
 
         attention_val = functional.attention(q_heads, k_heads, v_heads, causal_mask)
         
@@ -114,7 +112,6 @@ class MultiHeadSelfAttentionWithRoPE(nn.Module):
         in_features: Float[Tensor, " ... sequence_length d_model"],
         token_positions: Int[Tensor, " ... sequence_length"] | None = None, # Optional tensor with the positions of the tokens
     ) -> Float[Tensor, " ... sequence_length d_model"]:
-        prefix_shape = in_features.shape[:-2]  # 例如 (batch, heads) 或 (batch,)
         seq_len = in_features.shape[-2]
 
         # 1. get q k v
@@ -150,9 +147,8 @@ class MultiHeadSelfAttentionWithRoPE(nn.Module):
         q_heads = self.rope(q_heads, token_positions)
         k_heads = self.rope(k_heads, token_positions)
 
-        causal_mask = ~torch.triu(torch.ones(seq_len, seq_len, dtype=torch.bool), diagonal=1)
-        target_shape = prefix_shape + (seq_len, seq_len)
-        causal_mask = causal_mask.broadcast_to(target_shape)
+        causal_mask = torch.ones(seq_len, seq_len, dtype=torch.bool, device=in_features.device).tril()
+        causal_mask = causal_mask.view(*([1] * (q_heads.ndim - 2)), seq_len, seq_len)
 
         attention_val = functional.attention(q_heads, k_heads, v_heads, causal_mask)
         
