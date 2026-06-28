@@ -58,7 +58,7 @@ class TransformerLanguageModel(nn.Module):
 
     def forward(
         self,
-        in_indices: Float[Tensor, " batch sequence_length d_model"],
+        in_indices: Float[Tensor, " batch sequence_length"],
     ) -> Float[Tensor, " batch_size sequence_length vocab_size"]:
         
         in_indices = self.embedding(in_indices)

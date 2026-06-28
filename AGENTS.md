@@ -2,6 +2,8 @@ Don't change or add file in tests folder, if you want to write test add it to un
 
 Don't read the pdf file
 
+Prefer einops to torch when changing torch shape
+
 ## Run code
 Run any code in the repo using
 ```sh
