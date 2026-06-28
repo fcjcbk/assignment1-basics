@@ -1,0 +1,33 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "train model",
+            "type": "debugpy",
+            "request": "launch",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "program": "${workspaceFolder}/cs336_basics/train_model.py",
+            "args": [
+                "--config",
+                "${workspaceFolder}/train_config.json"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "process tokenizer",
+            "type": "debugpy",
+            "request": "launch",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "program": "${workspaceFolder}/cs336_basics/preprocess_tinystories.py",
+            "args": [
+                "--input", "${workspaceFolder}/tests/fixtures/tinystories_sample_5M.txt",
+                "--output", "${workspaceFolder}/data/test.npy"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        }
+    ]
+}

@@ -11,6 +11,8 @@ import cs336_basics.model.funtional as functional
 import numpy.typing as npt
 import random
 import numpy as np
+from jaxtyping import jaxtyped
+from beartype import beartype
 
 
 def silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
@@ -64,6 +66,7 @@ def attention(
     soft_max_qk = functional.softmax(qk, -1)
     return einx.dot("... queries [keys], ... [keys] d_v -> ... queries d_v", soft_max_qk, V)
 
+@jaxtyped(typechecker=beartype)
 def cross_entropy(
     inputs: Float[Tensor, " batch_size vocab_size"],
     targets: Int[Tensor, " batch_size"]

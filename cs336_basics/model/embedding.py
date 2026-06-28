@@ -3,6 +3,9 @@ from torch import nn
 import torch
 from torch import Tensor
 import einx
+from jaxtyping import jaxtyped
+from beartype import beartype
+
 
 class Embedding(nn.Module):
     def __init__(
@@ -18,5 +21,6 @@ class Embedding(nn.Module):
         )
         torch.nn.init.trunc_normal_(self.weight, mean=0.0, std=1.0, a=-3.0, b=3.0)
 
+    @jaxtyped(typechecker=beartype)
     def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
         return self.weight[token_ids]

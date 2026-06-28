@@ -21,6 +21,7 @@ from cs336_basics.model.funtional import (
     sample_train_data,
     save_checkpoint,
 )
+from cs336_basics.tokenizer.tokenizer import Tokenizer
 from cs336_basics.model.optimizer import AdamW
 from cs336_basics.model.transformer_language_model import TransformerLanguageModel
 

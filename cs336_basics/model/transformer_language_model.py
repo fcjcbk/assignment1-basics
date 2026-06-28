@@ -3,6 +3,9 @@ from jaxtyping import Bool, Float, Int
 from torch import Tensor
 from torch import nn
 import einx
+from jaxtyping import jaxtyped
+from beartype import beartype
+
 from cs336_basics.model.embedding import Embedding
 from cs336_basics.model.transformer import Transformer 
 from cs336_basics.model.rms_norm import RMSNorm
@@ -55,10 +58,10 @@ class TransformerLanguageModel(nn.Module):
             dtype,
         )
 
-
+    @jaxtyped(typechecker=beartype)
     def forward(
         self,
-        in_indices: Float[Tensor, " batch sequence_length"],
+        in_indices: Int[Tensor, " batch sequence_length"],
     ) -> Float[Tensor, " batch_size sequence_length vocab_size"]:
         
         in_indices = self.embedding(in_indices)
