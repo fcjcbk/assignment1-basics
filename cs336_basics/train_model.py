@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import random
+import signal
 import sys
 import time
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
@@ -212,6 +213,30 @@ def build_optimizer(model: torch.nn.Module, config: OptimizerConfig) -> AdamW:
     )
 
 
+def _checkpoint_path_for_step(checkpoint_path: Path, step: int) -> Path:
+    return checkpoint_path.with_name(f"{checkpoint_path.stem}_step_{step}{checkpoint_path.suffix}")
+
+
+def _save_step_checkpoint(
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    step: int,
+    checkpoint_path: Path,
+    logger: logging.Logger,
+) -> Path:
+    step_checkpoint_path = _checkpoint_path_for_step(checkpoint_path, step)
+    save_checkpoint(model, optimizer, step, step_checkpoint_path)
+    logger.info("Saved checkpoint to %s at step %d", step_checkpoint_path, step)
+    return step_checkpoint_path
+
+
+def _signal_name(signum: int) -> str:
+    try:
+        return signal.Signals(signum).name
+    except ValueError:
+        return str(signum)
+
+
 def train(config: TrainingConfig) -> None:
     logger = configure_logging(config.logging)
     device = resolve_device(config.device)
@@ -238,6 +263,23 @@ def train(config: TrainingConfig) -> None:
     model.train()
     start_time = time.time()
     last_log_time = start_time
+    completed_step = start_step
+    last_checkpoint_step: int | None = None
+    shutdown_requested = False
+    shutdown_signal: str | None = None
+
+    def request_shutdown(signum: int, _frame: Any) -> None:
+        nonlocal shutdown_requested, shutdown_signal
+        shutdown_requested = True
+        shutdown_signal = _signal_name(signum)
+
+    original_signal_handlers: dict[signal.Signals, Any] = {}
+    for handled_signal in (signal.SIGINT, signal.SIGTERM):
+        try:
+            original_signal_handlers[handled_signal] = signal.getsignal(handled_signal)
+            signal.signal(handled_signal, request_shutdown)
+        except (OSError, ValueError):
+            pass
 
     logger.info(
         "Starting training: steps=%d, batch_size=%d, context_length=%d, device=%s",
@@ -247,54 +289,91 @@ def train(config: TrainingConfig) -> None:
         device,
     )
 
-    for step in range(start_step + 1, config.total_steps + 1):
-        lr = get_lr_cosine_schedule(
-            it=step,
-            max_learning_rate=config.optimizer.learning_rate,
-            min_learning_rate=config.optimizer.min_learning_rate,
-            warmup_iters=config.optimizer.warmup_iters,
-            cosine_cycle_iters=config.total_steps,
-        )
-        for param_group in optimizer.param_groups:
-            param_group["lr"] = lr
+    try:
+        for step in range(start_step + 1, config.total_steps + 1):
+            lr = get_lr_cosine_schedule(
+                it=step,
+                max_learning_rate=config.optimizer.learning_rate,
+                min_learning_rate=config.optimizer.min_learning_rate,
+                warmup_iters=config.optimizer.warmup_iters,
+                cosine_cycle_iters=config.total_steps,
+            )
+            for param_group in optimizer.param_groups:
+                param_group["lr"] = lr
 
-        inputs, targets = sample_train_data(
-            dataset=dataset,
-            batch_size=config.batch_size,
-            context_length=config.model.context_length,
-            device=device,
-        )
-
-        logits = model(inputs)
-        loss = cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
-
-        optimizer.zero_grad()
-        loss.backward()
-        if config.optimizer.max_grad_norm is not None:
-            gradient_clipping(model.parameters(), config.optimizer.max_grad_norm)
-        optimizer.step()
-
-        if step % config.logging.log_interval == 0 or step == 1:
-            now = time.time()
-            elapsed = now - start_time
-            steps_per_sec = config.logging.log_interval / max(now - last_log_time, 1e-8)
-            last_log_time = now
-            logger.info(
-                "step=%d/%d loss=%.6f lr=%.6g elapsed=%.1fs steps_per_sec=%.2f",
-                step,
-                config.total_steps,
-                loss.item(),
-                lr,
-                elapsed,
-                steps_per_sec,
+            inputs, targets = sample_train_data(
+                dataset=dataset,
+                batch_size=config.batch_size,
+                context_length=config.model.context_length,
+                device=device,
             )
 
-        if config.checkpoint.save_interval > 0 and step % config.checkpoint.save_interval == 0:
-            save_checkpoint(model, optimizer, step, checkpoint_path)
-            logger.info("Saved checkpoint to %s at step %d", checkpoint_path, step)
+            logits = model(inputs)
+            loss = cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
 
-    save_checkpoint(model, optimizer, config.total_steps, checkpoint_path)
-    logger.info("Training complete. Final checkpoint saved to %s", checkpoint_path)
+            optimizer.zero_grad()
+            loss.backward()
+            if config.optimizer.max_grad_norm is not None:
+                gradient_clipping(model.parameters(), config.optimizer.max_grad_norm)
+            optimizer.step()
+            completed_step = step
+
+            if step % config.logging.log_interval == 0 or step == 1:
+                now = time.time()
+                elapsed = now - start_time
+                steps_per_sec = config.logging.log_interval / max(now - last_log_time, 1e-8)
+                last_log_time = now
+                logger.info(
+                    "step=%d/%d loss=%.6f lr=%.6g elapsed=%.1fs steps_per_sec=%.2f",
+                    step,
+                    config.total_steps,
+                    loss.item(),
+                    lr,
+                    elapsed,
+                    steps_per_sec,
+                )
+
+            saved_checkpoint_path: Path | None = None
+            if config.checkpoint.save_interval > 0 and step % config.checkpoint.save_interval == 0:
+                saved_checkpoint_path = _save_step_checkpoint(model, optimizer, step, checkpoint_path, logger)
+                last_checkpoint_step = step
+
+            if shutdown_requested:
+                if last_checkpoint_step != step:
+                    saved_checkpoint_path = _save_step_checkpoint(model, optimizer, step, checkpoint_path, logger)
+                    last_checkpoint_step = step
+                if saved_checkpoint_path is None:
+                    saved_checkpoint_path = _checkpoint_path_for_step(checkpoint_path, step)
+                logger.info(
+                    "Received %s. Exiting after step %d with checkpoint %s",
+                    shutdown_signal or "shutdown request",
+                    step,
+                    saved_checkpoint_path,
+                )
+                return
+
+        final_checkpoint_path: Path
+        if last_checkpoint_step == config.total_steps:
+            final_checkpoint_path = _checkpoint_path_for_step(checkpoint_path, config.total_steps)
+        else:
+            final_checkpoint_path = _save_step_checkpoint(model, optimizer, config.total_steps, checkpoint_path, logger)
+        logger.info("Training complete. Final checkpoint saved to %s", final_checkpoint_path)
+    except KeyboardInterrupt:
+        if completed_step <= start_step:
+            raise
+        interrupted_checkpoint_path = _checkpoint_path_for_step(checkpoint_path, completed_step)
+        if last_checkpoint_step != completed_step:
+            interrupted_checkpoint_path = _save_step_checkpoint(
+                model,
+                optimizer,
+                completed_step,
+                checkpoint_path,
+                logger,
+            )
+        logger.info("Interrupted. Latest completed checkpoint saved to %s", interrupted_checkpoint_path)
+    finally:
+        for handled_signal, original_handler in original_signal_handlers.items():
+            signal.signal(handled_signal, original_handler)
 
 
 def print_example_config() -> None:
