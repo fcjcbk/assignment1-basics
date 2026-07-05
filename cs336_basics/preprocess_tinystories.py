@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+from collections.abc import Iterable, Iterator
 from dataclasses import asdict
 from pathlib import Path
 
@@ -17,6 +18,7 @@ DEFAULT_INPUT_PATH = Path("tests/fixtures/tinystories_sample.txt")
 DEFAULT_OUTPUT_PATH = Path("data/tinystories_sample_tokens.npy")
 DEFAULT_TOKENIZER_DIR = Path("data/tinystories_tokenizer")
 DEFAULT_SPECIAL_TOKENS = ["<|endoftext|>"]
+DEFAULT_TOKEN_CHUNK_SIZE = 1_000_000
 
 
 def _encode_bytes(value: bytes) -> str:
@@ -58,6 +60,65 @@ def save_training_config(config_path: Path, token_path: Path, vocab_size: int) -
     config_path.write_text(json.dumps(asdict(config), indent=2), encoding="utf-8")
 
 
+def _resolve_token_dtype(dtype: str, vocab_size: int) -> np.dtype:
+    token_dtype = np.dtype(dtype)
+    if not np.issubdtype(token_dtype, np.integer):
+        raise ValueError(f"token dtype must be an integer dtype, got {token_dtype}")
+
+    max_storable_token_id = np.iinfo(token_dtype).max
+    max_vocab_token_id = vocab_size - 1
+    if max_storable_token_id < max_vocab_token_id:
+        raise ValueError(
+            f"token dtype {token_dtype} can store token ids up to {max_storable_token_id}, "
+            f"but vocab size {vocab_size} requires ids up to {max_vocab_token_id}"
+        )
+    return token_dtype
+
+
+def _iter_encoded_token_chunks(
+    tokenizer: Tokenizer,
+    text_iterable: Iterable[str],
+    dtype: np.dtype,
+    chunk_size: int = DEFAULT_TOKEN_CHUNK_SIZE,
+) -> Iterator[np.ndarray]:
+    token_buffer: list[int] = []
+    for token_id in tokenizer.encode_iterable(text_iterable):
+        token_buffer.append(token_id)
+        if len(token_buffer) >= chunk_size:
+            yield np.asarray(token_buffer, dtype=dtype)
+            token_buffer.clear()
+
+    if token_buffer:
+        yield np.asarray(token_buffer, dtype=dtype)
+
+
+def _count_encoded_tokens(input_path: Path, tokenizer: Tokenizer, dtype: np.dtype) -> tuple[int, int]:
+    token_count = 0
+    max_token_id = -1
+    with input_path.open(encoding="utf-8") as input_file:
+        for chunk in _iter_encoded_token_chunks(tokenizer, input_file, dtype):
+            token_count += len(chunk)
+            max_token_id = max(max_token_id, int(chunk.max()))
+    return token_count, max_token_id
+
+
+def _write_encoded_tokens(
+    input_path: Path,
+    output_path: Path,
+    tokenizer: Tokenizer,
+    dtype: np.dtype,
+    token_count: int,
+) -> None:
+    token_ids = np.lib.format.open_memmap(output_path, mode="w+", dtype=dtype, shape=(token_count,))
+    offset = 0
+    with input_path.open(encoding="utf-8") as input_file:
+        for chunk in _iter_encoded_token_chunks(tokenizer, input_file, dtype):
+            next_offset = offset + len(chunk)
+            token_ids[offset:next_offset] = chunk
+            offset = next_offset
+    token_ids.flush()
+
+
 def preprocess_tinystories(
     input_path: Path,
     output_path: Path,
@@ -76,24 +137,23 @@ def preprocess_tinystories(
         special_tokens=special_tokens,
     )
     tokenizer = Tokenizer(vocab=vocab, merges=merges, special_tokens=special_tokens)
+    token_dtype = _resolve_token_dtype(dtype, len(vocab))
 
-    text = input_path.read_text(encoding="utf-8")
-    token_ids = np.asarray(tokenizer.encode(text), dtype=np.dtype(dtype))
-    if token_ids.ndim != 1 or len(token_ids) < 2:
-        raise ValueError(f"Expected at least two token ids, got shape {token_ids.shape}")
-
-    max_token_id = int(token_ids.max())
+    print("finish train bpe")
+    token_count, max_token_id = _count_encoded_tokens(input_path, tokenizer, token_dtype)
+    if token_count < 2:
+        raise ValueError(f"Expected at least two token ids, got {token_count}")
     if max_token_id >= len(vocab):
         raise ValueError(f"Encoded token id {max_token_id} is outside vocab size {len(vocab)}")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    np.save(output_path, token_ids)
+    _write_encoded_tokens(input_path, output_path, tokenizer, token_dtype, token_count)
     save_tokenizer_artifacts(tokenizer_dir, vocab, merges, special_tokens)
 
     if train_config_out is not None:
         save_training_config(train_config_out, output_path, len(vocab))
 
-    print(f"Wrote {len(token_ids)} token ids to {output_path}")
+    print(f"Wrote {token_count} token ids to {output_path}")
     print(f"Wrote tokenizer artifacts to {tokenizer_dir}")
     if train_config_out is not None:
         print(f"Wrote train config to {train_config_out}")

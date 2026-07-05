@@ -91,11 +91,11 @@ class Tokenizer:
             t = text[last_end : match.start()]
             # print("encode single token: [{}]".format(t))
             if len(t) > 0:
-                tokens = tokens + self.encode_without_special_tokens(t)
+                tokens.extend(self.encode_without_special_tokens(t))
             token = match.group(0)
             tokens.append(self.reverse_vocab[token.encode("utf-8")])
             last_end = match.end()
-        tokens = tokens + self.encode_without_special_tokens(text[last_end:])
+        tokens.extend(self.encode_without_special_tokens(text[last_end:]))
         return tokens
 
     def encode_without_special_tokens(
@@ -110,7 +110,7 @@ class Tokenizer:
             token = match.group(0)
             if not token:
                 continue
-            tokens = tokens + self.encode_single_token(token)
+            tokens.extend(self.encode_single_token(token))
             
         return tokens
             

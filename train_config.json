@@ -25,7 +25,7 @@
     "synthetic_num_tokens": 128
   },
   "checkpoint": {
-    "path": "unit_tests/tmp_train_checkpoint.pt",
+    "path": "data/checkpoint/train_checkpoint.pt",
     "save_interval": 1000
   },
   "logging": {

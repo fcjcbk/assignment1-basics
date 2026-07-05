@@ -22,8 +22,10 @@
             "python": "${workspaceFolder}/.venv/bin/python",
             "program": "${workspaceFolder}/cs336_basics/preprocess_tinystories.py",
             "args": [
-                "--input", "${workspaceFolder}/tests/fixtures/tinystories_sample_5M.txt",
-                "--output", "${workspaceFolder}/data/test.npy"
+                "--input",
+                "${workspaceFolder}/tests/fixtures/tinystories_sample_5M.txt",
+                "--output",
+                "${workspaceFolder}/data/test.npy"
             ],
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
