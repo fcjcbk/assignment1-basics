@@ -26,11 +26,11 @@
   },
   "checkpoint": {
     "path": "unit_tests/tmp_train_checkpoint.pt",
-    "save_interval": 100
+    "save_interval": 1000
   },
   "logging": {
     "log_interval": 100,
-    "log_file": "unit_tests/tmp_train.log"
+    "log_file": "log/train.log"
   },
   "batch_size": 32,
   "total_steps": 40000,
