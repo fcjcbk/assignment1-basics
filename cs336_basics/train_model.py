@@ -14,6 +14,7 @@ from typing import Any
 import numpy as np
 import torch
 
+from cs336_basics.evaluation import ValidationLossResult, evaluate_validation_loss, with_checkpoint_iteration
 from cs336_basics.model.funtional import (
     cross_entropy,
     get_lr_cosine_schedule,
@@ -74,12 +75,22 @@ class LoggingConfig:
 
 
 @dataclass
+class EvalConfig:
+    valid_path: str | None = None
+    interval: int = 1000
+    mode: str = "sampled"
+    num_batches: int = 50
+    batch_size: int | None = None
+
+
+@dataclass
 class TrainingConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
     data: DataConfig = field(default_factory=DataConfig)
     checkpoint: CheckpointConfig = field(default_factory=CheckpointConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    eval: EvalConfig = field(default_factory=EvalConfig)
     batch_size: int = 8
     total_steps: int = 100
     device: str = "auto"
@@ -213,6 +224,88 @@ def build_optimizer(model: torch.nn.Module, config: OptimizerConfig) -> AdamW:
     )
 
 
+def load_validation_dataset(config: TrainingConfig, valid_path: str, logger: logging.Logger) -> np.ndarray:
+    return load_dataset(
+        DataConfig(train_path=valid_path, dtype=config.data.dtype, use_memmap=config.data.use_memmap),
+        config.model.vocab_size,
+        logger,
+    )
+
+
+def evaluate_model_on_validation(
+    model: torch.nn.Module,
+    dataset: np.ndarray,
+    config: TrainingConfig,
+    device: str,
+    mode: str | None = None,
+    num_batches: int | None = None,
+    batch_size: int | None = None,
+) -> ValidationLossResult:
+    eval_mode = mode or config.eval.mode
+    eval_num_batches = num_batches if num_batches is not None else config.eval.num_batches
+    eval_batch_size = batch_size or config.eval.batch_size or config.batch_size
+    return evaluate_validation_loss(
+        model=model,
+        dataset=dataset,
+        mode=eval_mode,
+        batch_size=eval_batch_size,
+        context_length=config.model.context_length,
+        device=device,
+        num_batches=eval_num_batches,
+    )
+
+
+def evaluate_checkpoint(
+    config: TrainingConfig,
+    checkpoint_path: str | Path,
+    valid_path: str | None = None,
+    mode: str | None = None,
+    num_batches: int | None = None,
+    batch_size: int | None = None,
+    device: str | None = None,
+) -> ValidationLossResult:
+    logger = configure_logging(config.logging)
+    resolved_device = resolve_device(device or config.device)
+    set_seed(config.seed)
+
+    validation_path = valid_path or config.eval.valid_path
+    if validation_path is None:
+        raise ValueError("A validation path is required. Set eval.valid_path or pass --valid-path.")
+
+    validation_dataset = load_validation_dataset(config, validation_path, logger)
+    model = build_model(config.model, resolved_device)
+    optimizer = build_optimizer(model, config.optimizer)
+    checkpoint_iteration = load_checkpoint(checkpoint_path, model, optimizer)
+    result = evaluate_model_on_validation(
+        model=model,
+        dataset=validation_dataset,
+        config=config,
+        device=resolved_device,
+        mode=mode,
+        num_batches=num_batches,
+        batch_size=batch_size,
+    )
+    return with_checkpoint_iteration(result, checkpoint_iteration)
+
+
+def format_validation_result(result: ValidationLossResult, step: int | None = None) -> str:
+    pieces: list[str] = []
+    if step is not None:
+        pieces.append(f"step={step}")
+    if result.checkpoint_iteration is not None:
+        pieces.append(f"checkpoint_iteration={result.checkpoint_iteration}")
+    pieces.extend(
+        [
+            f"mode={result.mode}",
+            f"val_loss={result.loss:.6f}",
+            f"val_ppl={result.perplexity:.6f}",
+            f"eval_tokens={result.token_count}",
+            f"eval_elapsed={result.elapsed_seconds:.2f}s",
+        ]
+    )
+    return " ".join(pieces)
+
+
 def _checkpoint_path_for_step(checkpoint_path: Path, step: int) -> Path:
     return checkpoint_path.with_name(f"{checkpoint_path.stem}_step_{step}{checkpoint_path.suffix}")
 
@@ -248,6 +341,12 @@ def train(config: TrainingConfig) -> None:
     dataset = load_dataset(config.data, config.model.vocab_size, logger)
     if len(dataset) <= config.model.context_length:
         raise ValueError("Dataset length must be greater than model.context_length")
+
+    validation_dataset: np.ndarray | None = None
+    if config.eval.valid_path is not None and config.eval.interval > 0:
+        validation_dataset = load_validation_dataset(config, config.eval.valid_path, logger)
+        if len(validation_dataset) <= config.model.context_length:
+            raise ValueError("Validation dataset length must be greater than model.context_length")
 
     model = build_model(config.model, device)
     optimizer = build_optimizer(model, config.optimizer)
@@ -333,6 +432,15 @@ def train(config: TrainingConfig) -> None:
                     steps_per_sec,
                 )
 
+            if validation_dataset is not None and (step % config.eval.interval == 0 or step == config.total_steps):
+                eval_result = evaluate_model_on_validation(
+                    model=model,
+                    dataset=validation_dataset,
+                    config=config,
+                    device=device,
+                )
+                logger.info(format_validation_result(eval_result, step=step))
+
             saved_checkpoint_path: Path | None = None
             if config.checkpoint.save_interval > 0 and step % config.checkpoint.save_interval == 0:
                 saved_checkpoint_path = _save_step_checkpoint(model, optimizer, step, checkpoint_path, logger)
@@ -384,6 +492,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train a Transformer language model from a JSON config.")
     parser.add_argument("--config", type=str, default=None, help="Path to a JSON training config.")
     parser.add_argument("--print-example-config", action="store_true", help="Print a complete example config and exit.")
+    parser.add_argument("--eval-checkpoint", type=str, default=None, help="Evaluate this checkpoint and exit without training.")
+    parser.add_argument("--valid-path", type=str, default=None, help="Validation token dataset path for checkpoint eval.")
+    parser.add_argument("--eval-mode", choices=("sampled", "full"), default=None, help="Validation mode override.")
+    parser.add_argument("--eval-num-batches", type=int, default=None, help="Number of sampled validation batches.")
+    parser.add_argument("--eval-batch-size", type=int, default=None, help="Validation batch size override.")
+    parser.add_argument("--device", type=str, default=None, help="Device override for checkpoint eval.")
     return parser.parse_args()
 
 
@@ -394,6 +508,19 @@ def main() -> None:
         return
 
     config = load_config(args.config)
+    if args.eval_checkpoint is not None:
+        result = evaluate_checkpoint(
+            config=config,
+            checkpoint_path=args.eval_checkpoint,
+            valid_path=args.valid_path,
+            mode=args.eval_mode,
+            num_batches=args.eval_num_batches,
+            batch_size=args.eval_batch_size,
+            device=args.device,
+        )
+        print(format_validation_result(result))
+        return
+
     train(config)
 
 

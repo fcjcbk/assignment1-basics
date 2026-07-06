@@ -8,6 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
+from tqdm import tqdm
 
 from cs336_basics.tokenizer.bpe import train_bpe
 from cs336_basics.tokenizer.tokenizer import Tokenizer
@@ -92,13 +93,23 @@ def _iter_encoded_token_chunks(
         yield np.asarray(token_buffer, dtype=dtype)
 
 
-def _count_encoded_tokens(input_path: Path, tokenizer: Tokenizer, dtype: np.dtype) -> tuple[int, int]:
+def _count_encoded_tokens(
+    input_path: Path,
+    tokenizer: Tokenizer,
+    dtype: np.dtype,
+    show_progress: bool = False,
+) -> tuple[int, int]:
     token_count = 0
     max_token_id = -1
-    with input_path.open(encoding="utf-8") as input_file:
-        for chunk in _iter_encoded_token_chunks(tokenizer, input_file, dtype):
-            token_count += len(chunk)
-            max_token_id = max(max_token_id, int(chunk.max()))
+    progress = tqdm(desc="Counting token ids", unit="token", disable=not show_progress)
+    try:
+        with input_path.open(encoding="utf-8") as input_file:
+            for chunk in _iter_encoded_token_chunks(tokenizer, input_file, dtype):
+                token_count += len(chunk)
+                max_token_id = max(max_token_id, int(chunk.max()))
+                progress.update(len(chunk))
+    finally:
+        progress.close()
     return token_count, max_token_id
 
 
@@ -108,15 +119,21 @@ def _write_encoded_tokens(
     tokenizer: Tokenizer,
     dtype: np.dtype,
     token_count: int,
+    show_progress: bool = False,
 ) -> None:
     token_ids = np.lib.format.open_memmap(output_path, mode="w+", dtype=dtype, shape=(token_count,))
     offset = 0
-    with input_path.open(encoding="utf-8") as input_file:
-        for chunk in _iter_encoded_token_chunks(tokenizer, input_file, dtype):
-            next_offset = offset + len(chunk)
-            token_ids[offset:next_offset] = chunk
-            offset = next_offset
-    token_ids.flush()
+    progress = tqdm(total=token_count, desc="Writing token ids", unit="token", disable=not show_progress)
+    try:
+        with input_path.open(encoding="utf-8") as input_file:
+            for chunk in _iter_encoded_token_chunks(tokenizer, input_file, dtype):
+                next_offset = offset + len(chunk)
+                token_ids[offset:next_offset] = chunk
+                offset = next_offset
+                progress.update(len(chunk))
+        token_ids.flush()
+    finally:
+        progress.close()
 
 
 def preprocess_tinystories(
@@ -127,36 +144,48 @@ def preprocess_tinystories(
     special_tokens: list[str],
     dtype: str,
     train_config_out: Path | None,
+    show_progress: bool = True,
 ) -> None:
     if output_path.suffix != ".npy":
         raise ValueError("output path must end with .npy so train_model.py can load it with np.load")
 
+    _print_stage("Training BPE tokenizer", show_progress)
     vocab, merges = train_bpe(
         input_path=input_path,
         vocab_size=vocab_size,
         special_tokens=special_tokens,
+        show_progress=show_progress,
     )
     tokenizer = Tokenizer(vocab=vocab, merges=merges, special_tokens=special_tokens)
     token_dtype = _resolve_token_dtype(dtype, len(vocab))
 
-    print("finish train bpe")
-    token_count, max_token_id = _count_encoded_tokens(input_path, tokenizer, token_dtype)
+    _print_stage("Counting token ids", show_progress)
+    token_count, max_token_id = _count_encoded_tokens(input_path, tokenizer, token_dtype, show_progress)
     if token_count < 2:
         raise ValueError(f"Expected at least two token ids, got {token_count}")
     if max_token_id >= len(vocab):
         raise ValueError(f"Encoded token id {max_token_id} is outside vocab size {len(vocab)}")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    _write_encoded_tokens(input_path, output_path, tokenizer, token_dtype, token_count)
+    _print_stage("Writing token ids", show_progress)
+    _write_encoded_tokens(input_path, output_path, tokenizer, token_dtype, token_count, show_progress)
+
+    _print_stage("Saving tokenizer artifacts", show_progress)
     save_tokenizer_artifacts(tokenizer_dir, vocab, merges, special_tokens)
 
     if train_config_out is not None:
+        _print_stage("Saving training config", show_progress)
         save_training_config(train_config_out, output_path, len(vocab))
 
     print(f"Wrote {token_count} token ids to {output_path}")
     print(f"Wrote tokenizer artifacts to {tokenizer_dir}")
     if train_config_out is not None:
         print(f"Wrote train config to {train_config_out}")
+
+
+def _print_stage(message: str, show_progress: bool) -> None:
+    if show_progress:
+        print(f"[{message}]")
 
 
 def parse_args() -> argparse.Namespace:
@@ -180,6 +209,7 @@ def parse_args() -> argparse.Namespace:
         help="Special token to reserve. Can be passed multiple times.",
     )
     parser.add_argument("--dtype", default="int64", help="NumPy dtype for token ids, for example int64 or uint16.")
+    parser.add_argument("--no-progress", action="store_true", help="Disable progress bars and stage output.")
     parser.add_argument(
         "--train-config-out",
         type=Path,
@@ -199,6 +229,7 @@ def main() -> None:
         special_tokens=args.special_tokens or DEFAULT_SPECIAL_TOKENS,
         dtype=args.dtype,
         train_config_out=args.train_config_out,
+        show_progress=not args.no_progress,
     )
 
 

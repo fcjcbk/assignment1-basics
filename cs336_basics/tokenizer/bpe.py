@@ -1,8 +1,11 @@
+import codecs
 import heapq
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 import regex
+from tqdm import tqdm
 
 TokenPair = tuple[bytes, bytes]
 PairHeapItem = tuple[int, "ReverseBytes", "ReverseBytes", bytes, bytes, int]
@@ -32,6 +35,8 @@ def train_bpe(
     input_path: str | os.PathLike,
     vocab_size: int,
     special_tokens: list[str],
+    show_progress: bool = False,
+    input_chunk_size: int = 16 * 1024 * 1024,
     **kwargs,
 ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
     """Train a BPE tokenizer and return the vocabulary and merge list."""
@@ -50,10 +55,12 @@ def train_bpe(
     if next_vocab_id >= vocab_size:
         return vocab, merges
 
-    with open(input_path, encoding="utf-8") as f:
-        text = f.read()
-
-    word_frequencies = tokenize_with_special(text, special_tokens)
+    word_frequencies = _stream_tokenize_with_special(
+        input_path,
+        special_tokens,
+        chunk_size=input_chunk_size,
+        show_progress=show_progress,
+    )
     words, pair_counts, pair_to_words = _build_word_states(word_frequencies, set(special_tokens))
 
     pair_versions: dict[TokenPair, int] = {}
@@ -65,45 +72,55 @@ def train_bpe(
         heapq.heappush(pair_heap, _make_versioned_heap_item(count, pair, 1))
 
     vocab_tokens = set(vocab.values())
-    while next_vocab_id < vocab_size:
-        best_pair = _pop_best_pair(pair_heap, pair_counts, pair_versions)
-        if best_pair is None:
-            break
+    merge_progress = tqdm(
+        total=max(vocab_size - next_vocab_id, 0),
+        desc="Learning BPE merges",
+        unit="merge",
+        disable=not show_progress,
+    )
+    try:
+        while next_vocab_id < vocab_size:
+            best_pair = _pop_best_pair(pair_heap, pair_counts, pair_versions)
+            if best_pair is None:
+                break
 
-        left, right = best_pair
-        merged_token = left + right
-        if merged_token in vocab_tokens:
-            continue
-
-        vocab[next_vocab_id] = merged_token
-        vocab_tokens.add(merged_token)
-        next_vocab_id += 1
-        merges.append(best_pair)
-
-        affected_word_ids = list(pair_to_words.get(best_pair, ()))
-        changed_pairs: set[TokenPair] = set()
-        for word_id in affected_word_ids:
-            word = words[word_id]
-            new_tokens = _merge_pair_in_word(word.tokens, best_pair, merged_token)
-            if new_tokens == word.tokens:
+            left, right = best_pair
+            merged_token = left + right
+            if merged_token in vocab_tokens:
                 continue
 
-            old_pair_counts = word.pair_counts
-            new_pair_counts = _count_adjacent_pairs(new_tokens)
-            _update_pair_statistics(
-                word_id=word_id,
-                word_frequency=word.frequency,
-                old_pair_counts=old_pair_counts,
-                new_pair_counts=new_pair_counts,
-                pair_counts=pair_counts,
-                pair_to_words=pair_to_words,
-                changed_pairs=changed_pairs,
-            )
-            word.tokens = new_tokens
-            word.pair_counts = new_pair_counts
+            vocab[next_vocab_id] = merged_token
+            vocab_tokens.add(merged_token)
+            next_vocab_id += 1
+            merges.append(best_pair)
+            merge_progress.update(1)
 
-        for pair in changed_pairs:
-            _bump_pair_version(pair, pair_counts, pair_versions, pair_heap)
+            affected_word_ids = list(pair_to_words.get(best_pair, ()))
+            changed_pairs: set[TokenPair] = set()
+            for word_id in affected_word_ids:
+                word = words[word_id]
+                new_tokens = _merge_pair_in_word(word.tokens, best_pair, merged_token)
+                if new_tokens == word.tokens:
+                    continue
+
+                old_pair_counts = word.pair_counts
+                new_pair_counts = _count_adjacent_pairs(new_tokens)
+                _update_pair_statistics(
+                    word_id=word_id,
+                    word_frequency=word.frequency,
+                    old_pair_counts=old_pair_counts,
+                    new_pair_counts=new_pair_counts,
+                    pair_counts=pair_counts,
+                    pair_to_words=pair_to_words,
+                    changed_pairs=changed_pairs,
+                )
+                word.tokens = new_tokens
+                word.pair_counts = new_pair_counts
+
+            for pair in changed_pairs:
+                _bump_pair_version(pair, pair_counts, pair_versions, pair_heap)
+    finally:
+        merge_progress.close()
 
     return vocab, merges
 
@@ -124,6 +141,130 @@ def tokenize_with_special(text: str, special_tokens: list[str]) -> dict[str, int
 
     _count_base_tokens(text[last_end:], word_frequencies)
     return word_frequencies
+
+
+def _stream_tokenize_with_special(
+    input_path: str | os.PathLike,
+    special_tokens: list[str],
+    chunk_size: int = 16 * 1024 * 1024,
+    show_progress: bool = False,
+) -> dict[str, int]:
+    if chunk_size <= 0:
+        raise ValueError(f"chunk_size must be positive, got {chunk_size}")
+
+    word_frequencies: dict[str, int] = {}
+    decoder = codecs.getincrementaldecoder("utf-8")()
+    text_buffer = ""
+    path = Path(input_path)
+
+    progress = tqdm(
+        total=path.stat().st_size,
+        desc="Scanning BPE corpus",
+        unit="B",
+        unit_scale=True,
+        disable=not show_progress,
+    )
+    try:
+        with path.open("rb") as input_file:
+            while raw_chunk := input_file.read(chunk_size):
+                progress.update(len(raw_chunk))
+                text_buffer += decoder.decode(raw_chunk, final=False)
+                processed_end = _count_complete_stream_tokens(
+                    text_buffer,
+                    special_tokens,
+                    word_frequencies,
+                    final=False,
+                )
+                if processed_end > 0:
+                    text_buffer = text_buffer[processed_end:]
+
+        text_buffer += decoder.decode(b"", final=True)
+        _count_complete_stream_tokens(text_buffer, special_tokens, word_frequencies, final=True)
+    finally:
+        progress.close()
+
+    return word_frequencies
+
+
+def _count_complete_stream_tokens(
+    text: str,
+    special_tokens: list[str],
+    word_frequencies: dict[str, int],
+    *,
+    final: bool,
+) -> int:
+    if final:
+        _merge_word_frequencies(word_frequencies, tokenize_with_special(text, special_tokens))
+        return len(text)
+
+    safe_cut = _stream_safe_cut(text, special_tokens)
+    if safe_cut <= 0:
+        return 0
+
+    special_pattern = build_special_token_pattern(special_tokens) if special_tokens else None
+    last_end = 0
+    processed_end = 0
+    next_special_start: int | None = None
+
+    if special_pattern is not None:
+        for match in special_pattern.finditer(text):
+            if match.end() > safe_cut:
+                next_special_start = match.start()
+                break
+
+            _count_base_tokens(text[last_end : match.start()], word_frequencies)
+            token = match.group(0)
+            word_frequencies[token] = word_frequencies.get(token, 0) + 1
+            last_end = match.end()
+            processed_end = last_end
+
+    if next_special_start is not None:
+        if next_special_start > last_end:
+            _count_base_tokens(text[last_end:next_special_start], word_frequencies)
+            processed_end = next_special_start
+        return processed_end
+
+    processed_base_end = _count_base_tokens_before_open_tail(
+        text,
+        word_frequencies,
+        start=last_end,
+        safe_cut=safe_cut,
+    )
+    return max(processed_end, processed_base_end)
+
+
+def _stream_safe_cut(text: str, special_tokens: list[str]) -> int:
+    if not special_tokens:
+        return len(text)
+    max_special_token_length = max(len(token) for token in special_tokens)
+    return max(0, len(text) - max_special_token_length + 1)
+
+
+def _count_base_tokens_before_open_tail(
+    text: str,
+    word_frequencies: dict[str, int],
+    *,
+    start: int,
+    safe_cut: int,
+) -> int:
+    processed_end = start
+    for match in regex.finditer(BASE_PATTERN, text, pos=start):
+        if match.end() > safe_cut:
+            break
+        if match.end() == len(text):
+            break
+
+        token = match.group(0)
+        if token:
+            word_frequencies[token] = word_frequencies.get(token, 0) + 1
+            processed_end = match.end()
+
+    return processed_end
+
+
+def _merge_word_frequencies(target: dict[str, int], source: dict[str, int]) -> None:
+    for token, count in source.items():
+        target[token] = target.get(token, 0) + count
 
 
 def _count_base_tokens(text: str, word_frequencies: dict[str, int]) -> None:

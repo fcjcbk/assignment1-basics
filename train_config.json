@@ -21,7 +21,7 @@
   },
   "data": {
     "use_memmap": true,
-    "train_path": "data/tinystories_sample_tokens.npy",
+    "train_path": "data/TinystoriesV2-GPT4-train.npy",
     "synthetic_num_tokens": 128
   },
   "checkpoint": {
@@ -31,6 +31,13 @@
   "logging": {
     "log_interval": 100,
     "log_file": "log/train.log"
+  },
+  "eval": {
+    "valid_path": "data/TinyStoriesV2-GPT4-valid.npy",
+    "interval": 1000,
+    "mode": "sampled",
+    "num_batches": 50,
+    "batch_size": null
   },
   "batch_size": 32,
   "total_steps": 40000,

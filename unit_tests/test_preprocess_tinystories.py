@@ -65,3 +65,28 @@ def test_preprocess_tinystories_streams_input_when_encoding(tmp_path: Path, monk
     assert tokens.ndim == 1
     assert tokens.dtype == np.uint16
     assert len(tokens) > 2
+
+
+def test_preprocess_tinystories_prints_progress_stages(tmp_path: Path, capsys):
+    input_path = tmp_path / "tiny.txt"
+    output_path = tmp_path / "tokens.npy"
+    tokenizer_dir = tmp_path / "tokenizer"
+    input_path.write_text("Once upon a time\nOnce again\n", encoding="utf-8")
+
+    preprocess_tinystories(
+        input_path=input_path,
+        output_path=output_path,
+        tokenizer_dir=tokenizer_dir,
+        vocab_size=270,
+        special_tokens=["<|endoftext|>"],
+        dtype="uint16",
+        train_config_out=None,
+        show_progress=True,
+    )
+
+    captured = capsys.readouterr()
+    combined_output = captured.out + captured.err
+    assert "Training BPE tokenizer" in combined_output
+    assert "Counting token ids" in combined_output
+    assert "Writing token ids" in combined_output
+    assert "Saving tokenizer artifacts" in combined_output
