@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import argparse
 
-from cs336_basics.train_model import evaluate_checkpoint, format_validation_result, load_config
+from cs336_basics.training.checkpoint_eval import evaluate_checkpoint, format_validation_result
+from cs336_basics.training.config import load_config
 
 
 def parse_args() -> argparse.Namespace:

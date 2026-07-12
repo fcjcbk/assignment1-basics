@@ -19,6 +19,9 @@ uv run <python_file_path>
 ```
 and the environment will be automatically solved and activated when necessary.
 
+For the refactored training, evaluation, generation, and data preprocessing workflow,
+see [docs/training_usage.md](docs/training_usage.md).
+
 ### Run unit tests
 
 
@@ -47,4 +50,3 @@ gunzip owt_valid.txt.gz
 
 cd ..
 ```
-
