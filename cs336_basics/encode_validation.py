@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import argparse
-import base64
-import json
 from pathlib import Path
-from typing import Any
 
 from cs336_basics.preprocess_tinystories import _count_encoded_tokens, _resolve_token_dtype, _write_encoded_tokens
 from cs336_basics.tokenizer.tokenizer import Tokenizer
@@ -15,35 +12,27 @@ DEFAULT_OUTPUT_PATH = Path("data/TinyStoriesV2-GPT4-valid.npy")
 DEFAULT_TOKENIZER_DIR = Path("data/tinystories_train_tokenizer")
 
 
-def _decode_bytes(value: str) -> bytes:
-    return base64.b64decode(value.encode("ascii"))
-
-
-def _read_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def load_tokenizer_artifacts(tokenizer_dir: Path) -> Tokenizer:
+def _tokenizer_artifact_paths(tokenizer_dir: Path) -> tuple[Path, Path, Path]:
     vocab_path = tokenizer_dir / "vocab.base64.json"
     merges_path = tokenizer_dir / "merges.base64.json"
     metadata_path = tokenizer_dir / "metadata.json"
+    return vocab_path, merges_path, metadata_path
+
+
+def _check_tokenizer_artifacts_exist(tokenizer_dir: Path) -> None:
+    vocab_path, merges_path, metadata_path = _tokenizer_artifact_paths(tokenizer_dir)
 
     missing_paths = [path for path in (vocab_path, merges_path, metadata_path) if not path.exists()]
     if missing_paths:
         missing = ", ".join(str(path) for path in missing_paths)
         raise FileNotFoundError(f"Missing tokenizer artifact(s): {missing}")
 
-    metadata = _read_json(metadata_path)
-    if metadata.get("encoding") != "base64":
-        raise ValueError(f"Expected base64 tokenizer artifacts, got encoding={metadata.get('encoding')!r}")
 
-    vocab_json = _read_json(vocab_path)
-    merges_json = _read_json(merges_path)
-    vocab = {int(token_id): _decode_bytes(token_bytes) for token_id, token_bytes in vocab_json.items()}
-    merges = [(_decode_bytes(left), _decode_bytes(right)) for left, right in merges_json]
-    special_tokens = metadata.get("special_tokens") or None
+def load_tokenizer_artifacts(tokenizer_dir: Path) -> Tokenizer:
+    _check_tokenizer_artifacts_exist(tokenizer_dir)
+    vocab_path, merges_path, metadata_path = _tokenizer_artifact_paths(tokenizer_dir)
 
-    return Tokenizer(vocab=vocab, merges=merges, special_tokens=special_tokens)
+    return Tokenizer.from_files(vocab_path, merges_path, metadata_path=metadata_path)
 
 
 def encode_validation_dataset(
@@ -56,7 +45,13 @@ def encode_validation_dataset(
     if output_path.suffix != ".npy":
         raise ValueError("output path must end with .npy so train_model.py can load it with np.load")
 
-    tokenizer = load_tokenizer_artifacts(tokenizer_dir)
+    _check_tokenizer_artifacts_exist(tokenizer_dir)
+    vocab_path, merges_path, metadata_path = _tokenizer_artifact_paths(tokenizer_dir)
+    tokenizer = Tokenizer.from_files(
+        vocab_path,
+        merges_path,
+        metadata_path=metadata_path,
+    )
     token_dtype = _resolve_token_dtype(dtype, len(tokenizer.vocab))
 
     if show_progress:

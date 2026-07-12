@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import random
 import signal
 import sys
@@ -23,7 +24,6 @@ from cs336_basics.model.funtional import (
     sample_train_data,
     save_checkpoint,
 )
-from cs336_basics.tokenizer.tokenizer import Tokenizer
 from cs336_basics.model.optimizer import AdamW
 from cs336_basics.model.transformer_language_model import TransformerLanguageModel
 
@@ -84,6 +84,16 @@ class EvalConfig:
 
 
 @dataclass
+class LossPlotConfig:
+    enabled: bool = False
+    path: str = "log/loss_curve.png"
+    interval: int = 10
+    width: int = 960
+    height: int = 540
+    dpi: int = 120
+
+
+@dataclass
 class TrainingConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
@@ -91,6 +101,7 @@ class TrainingConfig:
     checkpoint: CheckpointConfig = field(default_factory=CheckpointConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     eval: EvalConfig = field(default_factory=EvalConfig)
+    plot: LossPlotConfig = field(default_factory=LossPlotConfig)
     batch_size: int = 8
     total_steps: int = 100
     device: str = "auto"
@@ -306,6 +317,142 @@ def format_validation_result(result: ValidationLossResult, step: int | None = No
     return " ".join(pieces)
 
 
+class LossCurvePlotter:
+    def __init__(self, config: LossPlotConfig, total_steps: int):
+        if config.interval <= 0:
+            raise ValueError("plot.interval must be positive")
+        if config.width < 320:
+            raise ValueError("plot.width must be at least 320")
+        if config.height < 240:
+            raise ValueError("plot.height must be at least 240")
+        if config.dpi <= 0:
+            raise ValueError("plot.dpi must be positive")
+
+        self.config = config
+        self.total_steps = total_steps
+        self.path = Path(config.path)
+        self.train_points: list[tuple[int, float]] = []
+        self.validation_points: list[tuple[int, float]] = []
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._plt = _load_matplotlib_pyplot()
+
+    def record_train_loss(self, step: int, loss: float) -> None:
+        self._append_point(self.train_points, step, loss)
+
+    def record_validation_loss(self, step: int, loss: float) -> None:
+        self._append_point(self.validation_points, step, loss)
+
+    def maybe_render(self, step: int, force: bool = False) -> None:
+        if force or step == 1 or step % self.config.interval == 0:
+            self.render()
+
+    def render(self) -> None:
+        render_loss_curve_png(
+            plt=self._plt,
+            train_points=self.train_points,
+            validation_points=self.validation_points,
+            total_steps=self.total_steps,
+            path=self.path,
+            width=self.config.width,
+            height=self.config.height,
+            dpi=self.config.dpi,
+        )
+
+    @staticmethod
+    def _append_point(points: list[tuple[int, float]], step: int, loss: float) -> None:
+        if math.isfinite(loss):
+            points.append((step, loss))
+
+
+def _load_matplotlib_pyplot() -> Any:
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg", force=True)
+        import matplotlib.pyplot as plt
+    except ImportError as exc:
+        raise RuntimeError("matplotlib is required when plot.enabled is true") from exc
+    return plt
+
+
+def render_loss_curve_png(
+    plt: Any,
+    train_points: list[tuple[int, float]],
+    validation_points: list[tuple[int, float]],
+    total_steps: int,
+    path: Path,
+    width: int = 960,
+    height: int = 540,
+    dpi: int = 120,
+) -> None:
+    figure_size = (width / dpi, height / dpi)
+    figure, axis = plt.subplots(figsize=figure_size, dpi=dpi)
+    tmp_path = path.with_suffix(".tmp.png")
+    all_points = [*train_points, *validation_points]
+
+    try:
+        if train_points:
+            train_steps, train_losses = zip(*train_points, strict=True)
+            axis.plot(train_steps, train_losses, color="#2563eb", linewidth=2.0, label="train_loss")
+            axis.scatter(train_steps[-1], train_losses[-1], color="#1d4ed8", s=26, zorder=3)
+
+        if validation_points:
+            validation_steps, validation_losses = zip(*validation_points, strict=True)
+            axis.plot(
+                validation_steps,
+                validation_losses,
+                color="#dc2626",
+                linewidth=2.0,
+                marker="o",
+                markersize=4,
+                label="val_loss",
+            )
+            axis.scatter(validation_steps[-1], validation_losses[-1], color="#b91c1c", s=32, zorder=3)
+
+        axis.set_title("Training and validation loss")
+        axis.set_xlabel("step")
+        axis.set_ylabel("loss")
+        max_observed_step = max((step for step, _ in all_points), default=1)
+        axis.set_xlim(left=0, right=max(total_steps, max_observed_step, 1))
+        axis.grid(True, alpha=0.25)
+
+        if all_points:
+            latest = " | ".join(
+                piece
+                for piece in (
+                    _format_latest_loss("train_loss", train_points),
+                    _format_latest_loss("val_loss", validation_points),
+                )
+                if piece
+            )
+            axis.text(
+                0.5,
+                1.02,
+                latest,
+                transform=axis.transAxes,
+                ha="center",
+                va="bottom",
+                fontsize=9,
+                color="#4b5563",
+            )
+            axis.legend(loc="best")
+        else:
+            axis.text(0.5, 0.5, "Waiting for loss data", transform=axis.transAxes, ha="center", va="center")
+
+        figure.tight_layout()
+        figure.savefig(tmp_path, format="png")
+        tmp_path.replace(path)
+    finally:
+        plt.close(figure)
+
+
+def _format_latest_loss(label: str, points: list[tuple[int, float]]) -> str:
+    if not points:
+        return ""
+    step, loss = points[-1]
+    return f"{label}={loss:.6f} @ step {step}"
+
+
 def _checkpoint_path_for_step(checkpoint_path: Path, step: int) -> Path:
     return checkpoint_path.with_name(f"{checkpoint_path.stem}_step_{step}{checkpoint_path.suffix}")
 
@@ -358,6 +505,13 @@ def train(config: TrainingConfig) -> None:
 
     checkpoint_path = Path(config.checkpoint.path)
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    loss_plotter = LossCurvePlotter(config.plot, config.total_steps) if config.plot.enabled else None
+    if loss_plotter is not None:
+        logger.info(
+            "Writing live matplotlib loss curve to %s every %d step(s)",
+            loss_plotter.path,
+            config.plot.interval,
+        )
 
     model.train()
     start_time = time.time()
@@ -416,6 +570,11 @@ def train(config: TrainingConfig) -> None:
                 gradient_clipping(model.parameters(), config.optimizer.max_grad_norm)
             optimizer.step()
             completed_step = step
+            train_loss = float(loss.item())
+
+            if loss_plotter is not None:
+                loss_plotter.record_train_loss(step, train_loss)
+                loss_plotter.maybe_render(step)
 
             if step % config.logging.log_interval == 0 or step == 1:
                 now = time.time()
@@ -426,7 +585,7 @@ def train(config: TrainingConfig) -> None:
                     "step=%d/%d loss=%.6f lr=%.6g elapsed=%.1fs steps_per_sec=%.2f",
                     step,
                     config.total_steps,
-                    loss.item(),
+                    train_loss,
                     lr,
                     elapsed,
                     steps_per_sec,
@@ -440,6 +599,9 @@ def train(config: TrainingConfig) -> None:
                     device=device,
                 )
                 logger.info(format_validation_result(eval_result, step=step))
+                if loss_plotter is not None:
+                    loss_plotter.record_validation_loss(step, eval_result.loss)
+                    loss_plotter.maybe_render(step, force=True)
 
             saved_checkpoint_path: Path | None = None
             if config.checkpoint.save_interval > 0 and step % config.checkpoint.save_interval == 0:
@@ -458,6 +620,8 @@ def train(config: TrainingConfig) -> None:
                     step,
                     saved_checkpoint_path,
                 )
+                if loss_plotter is not None:
+                    loss_plotter.maybe_render(step, force=True)
                 return
 
         final_checkpoint_path: Path
@@ -480,6 +644,8 @@ def train(config: TrainingConfig) -> None:
             )
         logger.info("Interrupted. Latest completed checkpoint saved to %s", interrupted_checkpoint_path)
     finally:
+        if loss_plotter is not None:
+            loss_plotter.maybe_render(completed_step, force=True)
         for handled_signal, original_handler in original_signal_handlers.items():
             signal.signal(handled_signal, original_handler)
 

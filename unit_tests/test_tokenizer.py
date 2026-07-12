@@ -1,3 +1,6 @@
+from pathlib import Path
+
+from cs336_basics.preprocess_tinystories import save_tokenizer_artifacts
 from cs336_basics.tokenizer.tokenizer import Tokenizer
 
 def test_encode_single_token():
@@ -113,3 +116,38 @@ def test_encode_iterable_yields_token_ids_one_by_one():
 
     res = list(tokenizer.encode_iterable(["ab", "c"]))
     assert res == [1, 2, 3]
+
+
+def test_from_files_restores_base64_vocab_merges_and_special_tokens(tmp_path: Path):
+    tokenizer_dir = tmp_path / "tokenizer"
+    vocab = {0: b"a", 1: b"b", 2: b"ab", 3: b"<|endoftext|>"}
+    merges = [(b"a", b"b")]
+    special_tokens = ["<|endoftext|>"]
+    save_tokenizer_artifacts(tokenizer_dir, vocab, merges, special_tokens)
+
+    tokenizer = Tokenizer.from_files(
+        tokenizer_dir / "vocab.base64.json",
+        tokenizer_dir / "merges.base64.json",
+        special_tokens=special_tokens,
+    )
+
+    assert tokenizer.vocab == vocab
+    assert tokenizer.merges == merges
+    assert tokenizer.special_tokens == special_tokens
+
+
+def test_from_files_reads_special_tokens_from_metadata(tmp_path: Path):
+    tokenizer_dir = tmp_path / "tokenizer"
+    vocab = {0: b"a", 1: b"b", 2: b"ab", 3: b"<|endoftext|>"}
+    merges = [(b"a", b"b")]
+    special_tokens = ["<|endoftext|>"]
+    save_tokenizer_artifacts(tokenizer_dir, vocab, merges, special_tokens)
+
+    tokenizer = Tokenizer.from_files(
+        tokenizer_dir / "vocab.base64.json",
+        tokenizer_dir / "merges.base64.json",
+        metadata_path=tokenizer_dir / "metadata.json",
+    )
+
+    assert tokenizer.special_tokens == special_tokens
+    assert tokenizer.encode("a<|endoftext|>b") == [0, 3, 1]

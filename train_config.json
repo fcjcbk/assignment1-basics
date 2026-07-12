@@ -39,6 +39,14 @@
     "num_batches": 50,
     "batch_size": null
   },
+  "plot": {
+    "enabled": true,
+    "path": "log/loss_curve.png",
+    "interval": 100,
+    "width": 960,
+    "height": 540,
+    "dpi": 120
+  },
   "batch_size": 32,
   "total_steps": 40000,
   "device": "mps",

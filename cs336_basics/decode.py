@@ -10,7 +10,7 @@ from cs336_basics.model.funtional import softmax
 
 @jaxtyped(typechecker=beartype)
 def decode(
-    input_ids: Float[torch.Tensor, "batch seq_len"],
+    input_ids: Int[torch.Tensor, "batch seq_len"],
     model: nn.Module,
 ) -> Float[torch.Tensor, "batch seq_len vocab_size"]:
     """
@@ -64,9 +64,11 @@ def generate(
 
     max_tokens = prompt_ids.shape[1] + max_new_tokens
     batch_size = prompt_ids.shape[0]
+    device = prompt_ids.device
+    eos_token = torch.tensor(eos_token_id, dtype=prompt_ids.dtype, device=device)
     
     # (batch)
-    finished = torch.zeros(batch_size, dtype=torch.bool)
+    finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
     
     
     while prompt_ids.shape[1] < max_tokens:
@@ -77,11 +79,11 @@ def generate(
         next_tokens = sample(logits[:,-1], temperature, top_p)
         next_tokens = torch.where(
             finished,
-            eos_token_id,
+            eos_token,
             next_tokens,
         )
         
-        finished |= (next_tokens == eos_token_id)
+        finished |= (next_tokens == eos_token)
 
         next_tokens = rearrange(
             next_tokens.to(dtype=prompt_ids.dtype, device=prompt_ids.device),

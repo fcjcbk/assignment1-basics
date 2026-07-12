@@ -1,6 +1,20 @@
+import base64
+import json
 from collections.abc import Iterable
+from pathlib import Path
+from typing import Any
+
 import regex
 import cs336_basics.tokenizer.bpe as bpe
+
+
+def _decode_base64_bytes(value: str) -> bytes:
+    return base64.b64decode(value.encode("ascii"))
+
+
+def _read_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
 
 class Tokenizer:
     def __init__(
@@ -29,26 +43,35 @@ class Tokenizer:
             merge_priority[merge] = i
         self.merge_priority = merge_priority
 
-
+    @classmethod
     def from_files(
         cls,
-        vocab_filepath: str,
-        merges_filepath: str,
+        vocab_filepath: str | Path,
+        merges_filepath: str | Path,
         special_tokens: list[str] | None = None,
+        metadata_path: str | Path | None = None,
     ) -> "Tokenizer":
         """
         Create a tokenizer from files.
         """
-        # with open(vocab_filepath, "rb") as f:
-        #     vocab = pickle.load(f)
-        # with open(merges_filepath, "rb") as f:
-        #     merges = pickle.load(f)
-        # return cls(
-        #     vocab,
-        #     merges,
-        #     special_tokens,
-        # )
-        NotImplementedError
+        if metadata_path is not None:
+            metadata = _read_json(Path(metadata_path))
+            if metadata.get("encoding") != "base64":
+                raise ValueError(f"Expected base64 tokenizer artifacts, got encoding={metadata.get('encoding')!r}")
+            if special_tokens is None:
+                special_tokens = metadata.get("special_tokens") or None
+
+        vocab_json = _read_json(Path(vocab_filepath))
+        merges_json = _read_json(Path(merges_filepath))
+
+        vocab = {int(token_id): _decode_base64_bytes(token_bytes) for token_id, token_bytes in vocab_json.items()}
+        merges = [(_decode_base64_bytes(left), _decode_base64_bytes(right)) for left, right in merges_json]
+
+        return cls(
+            vocab,
+            merges,
+            special_tokens,
+        )
     
     def encode_iterable(
         self,

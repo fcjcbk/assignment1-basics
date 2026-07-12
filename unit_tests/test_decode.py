@@ -24,7 +24,7 @@ class RecordingLanguageModel(nn.Module):
 def test_decode_forwards_input_ids_to_model_and_returns_logits():
     decode_module = import_decode_module()
 
-    input_ids = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    input_ids = torch.tensor([[1, 2, 3], [4, 5, 6]])
     model = RecordingLanguageModel(vocab_size=4)
 
     logits = decode_module.decode(input_ids, model)
@@ -102,3 +102,34 @@ def test_generate_appends_sampled_tokens_and_stops_after_eos(monkeypatch):
     assert len(contexts_seen) == 2
     torch.testing.assert_close(contexts_seen[0], torch.tensor([[7, 8]]))
     torch.testing.assert_close(contexts_seen[1], torch.tensor([[7, 8, 4]]))
+
+
+def test_generate_keeps_control_tensors_on_prompt_device(monkeypatch):
+    if not torch.backends.mps.is_available():
+        return
+
+    decode_module = import_decode_module()
+    device = torch.device("mps")
+    prompt_ids = torch.tensor([[7]], dtype=torch.long, device=device)
+    sampled_tokens = [torch.tensor([2], dtype=torch.long, device=device)]
+
+    def fake_decode(context: torch.Tensor, model: nn.Module) -> torch.Tensor:
+        batch_size, seq_len = context.shape
+        return torch.zeros(batch_size, seq_len, 10, device=context.device)
+
+    def fake_sample(logits: torch.Tensor, temperature: float, top_p: float) -> torch.Tensor:
+        assert logits.device.type == device.type
+        return sampled_tokens.pop(0)
+
+    monkeypatch.setattr(decode_module, "decode", fake_decode)
+    monkeypatch.setattr(decode_module, "sample", fake_sample)
+
+    generated = decode_module.generate(
+        model=nn.Identity(),
+        prompt_ids=prompt_ids,
+        max_new_tokens=1,
+        eos_token_id=9,
+    )
+
+    assert generated.device.type == device.type
+    torch.testing.assert_close(generated.cpu(), torch.tensor([[7, 2]]))

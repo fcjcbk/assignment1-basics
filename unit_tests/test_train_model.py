@@ -11,6 +11,7 @@ from cs336_basics.train_model import (
     CheckpointConfig,
     DataConfig,
     EvalConfig,
+    LossPlotConfig,
     LoggingConfig,
     ModelConfig,
     OptimizerConfig,
@@ -143,6 +144,44 @@ def test_train_logs_validation_loss_when_eval_config_is_enabled(tmp_path: Path):
     assert "val_loss=" in log_text
     assert "val_ppl=" in log_text
     assert "eval_tokens=16" in log_text
+
+
+def test_train_writes_matplotlib_loss_curve_when_plot_config_is_enabled(tmp_path: Path):
+    checkpoint_path = tmp_path / "checkpoint.pt"
+    plot_path = tmp_path / "loss_curve.png"
+    valid_path = tmp_path / "valid.npy"
+    np.save(valid_path, np.arange(128, dtype=np.int64) % 32)
+
+    config = TrainingConfig(
+        model=ModelConfig(
+            vocab_size=32,
+            context_length=8,
+            num_layers=1,
+            d_model=16,
+            num_heads=4,
+            max_seq_len=8,
+            d_ff=32,
+        ),
+        optimizer=OptimizerConfig(
+            learning_rate=1e-3,
+            min_learning_rate=1e-4,
+            warmup_iters=1,
+            max_grad_norm=1.0,
+        ),
+        data=DataConfig(synthetic_num_tokens=128),
+        checkpoint=CheckpointConfig(path=str(checkpoint_path), save_interval=0),
+        logging=LoggingConfig(log_interval=1),
+        eval=EvalConfig(valid_path=str(valid_path), interval=1, mode="sampled", num_batches=1, batch_size=2),
+        plot=LossPlotConfig(enabled=True, path=str(plot_path), interval=1, width=480, height=320, dpi=100),
+        batch_size=2,
+        total_steps=2,
+        device="cpu",
+        seed=1337,
+    )
+
+    train_model.train(config)
+
+    assert plot_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
 
 
 def test_evaluate_checkpoint_loads_checkpoint_and_returns_validation_loss(tmp_path: Path):
