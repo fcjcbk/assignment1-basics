@@ -24,6 +24,9 @@
     "train_path": "data/TinystoriesV2-GPT4-train.npy",
     "synthetic_num_tokens": 128
   },
+  "run": {
+    "name": null
+  },
   "checkpoint": {
     "path": "data/checkpoint/train_checkpoint.pt",
     "save_interval": 1000
@@ -34,7 +37,7 @@
   },
   "eval": {
     "valid_path": "data/TinyStoriesV2-GPT4-valid.npy",
-    "interval": 1000,
+    "interval": 100,
     "mode": "sampled",
     "num_batches": 50,
     "batch_size": null
@@ -43,9 +46,11 @@
     "enabled": true,
     "path": "log/loss_curve.png",
     "interval": 100,
-    "width": 960,
-    "height": 540,
-    "dpi": 120
+    "width": 1000,
+    "height": 720,
+    "dpi": 120,
+    "show": true,
+    "pause_seconds": 0.001
   },
   "batch_size": 32,
   "total_steps": 40000,

@@ -75,10 +75,33 @@ uv run cs336_basics/cli.py train --config train_config.json
 uv run cs336_basics/cli.py train --print-example-config
 ```
 
+每次训练都会先解析一个 run name。若配置为 `null`，训练启动时会自动生成类似 `train-20260715-143012-a1b2c3` 的名字，避免连续训练互相覆盖产物：
+
+```json
+{
+  "run": {
+    "name": null
+  }
+}
+```
+
+也可以手动固定名字，方便复现实验或继续写入同一个 run 目录：
+
+```json
+{
+  "run": {
+    "name": "tinystories-debug"
+  }
+}
+```
+
 训练过程中会按 `checkpoint.save_interval` 保存 step-specific checkpoint。若配置为：
 
 ```json
 {
+  "run": {
+    "name": "tinystories-debug"
+  },
   "checkpoint": {
     "path": "data/checkpoint/train_checkpoint.pt",
     "save_interval": 1000
@@ -89,20 +112,27 @@ uv run cs336_basics/cli.py train --print-example-config
 则第 1000 步会写到：
 
 ```text
-data/checkpoint/train_checkpoint_step_1000.pt
+data/checkpoint/tinystories-debug/train_checkpoint_step_1000.pt
 ```
+
+同一次训练的日志和训练监控图也会写入对应 run 子目录，例如 `log/tinystories-debug/train.log` 和 `log/tinystories-debug/loss_curve.png`。
 
 训练支持 `checkpoint.resume_from` 继续训练：
 
 ```json
 {
+  "run": {
+    "name": "tinystories-debug"
+  },
   "checkpoint": {
     "path": "data/checkpoint/train_checkpoint.pt",
     "save_interval": 1000,
-    "resume_from": "data/checkpoint/train_checkpoint_step_1000.pt"
+    "resume_from": "data/checkpoint/tinystories-debug/train_checkpoint_step_1000.pt"
   }
 }
 ```
+
+`checkpoint.resume_from` 是输入 checkpoint 路径，不会被 run name 自动改写。若希望继续训练的后续产物仍写入原 run 目录，请显式设置同一个 `run.name`。
 
 ### eval
 
@@ -223,6 +253,9 @@ uv run cs336_basics/cli.py encode-validation \
     "dtype": "int64",
     "use_memmap": true
   },
+  "run": {
+    "name": null
+  },
   "eval": {
     "valid_path": "data/TinyStoriesV2-GPT4-valid.npy",
     "interval": 1000,
@@ -242,7 +275,7 @@ uv run cs336_basics/cli.py encode-validation \
 - `auto`：优先 CUDA，其次 MPS，最后 CPU。
 - `cpu`、`mps`、`cuda` 或其他 PyTorch device string。
 
-loss 曲线由 `plot` 配置控制：
+训练监控图由 `plot` 配置控制。启用后会持续刷新一张 PNG 仪表盘：上半部分显示 raw train loss、平滑后的 train loss trend、validation loss 和 best validation 点；下半部分显示 learning rate，并在底部展示最新 train/val loss、step/s、elapsed/ETA 与总进度。若将 `plot.show` 设为 `true`，训练时还会打开一张 Matplotlib 实时窗口，并按同一刷新节奏更新窗口和 `plot.path` 指向的 PNG 文件。
 
 ```json
 {
@@ -250,12 +283,16 @@ loss 曲线由 `plot` 配置控制：
     "enabled": true,
     "path": "log/loss_curve.png",
     "interval": 100,
-    "width": 960,
-    "height": 540,
-    "dpi": 120
+    "width": 1000,
+    "height": 720,
+    "dpi": 120,
+    "show": false,
+    "pause_seconds": 0.001
   }
 }
 ```
+
+`plot.show=true` 需要当前 Python/Matplotlib 能使用交互式图形后端；在无桌面会话或只配置了 `Agg` 后端的环境里，建议保持默认的 `false`。
 
 日志文件由 `logging.log_file` 控制，默认同时输出到 stdout。
 
@@ -372,7 +409,7 @@ metadata.json
 
 ### checkpoint 文件名和配置里的 path 不完全一样
 
-训练会把 step 插入文件名。例如配置中 `checkpoint.path` 是：
+训练会先插入 run name 目录，再把 step 插入文件名。例如配置中 `checkpoint.path` 是：
 
 ```text
 data/checkpoint/train_checkpoint.pt
@@ -381,7 +418,7 @@ data/checkpoint/train_checkpoint.pt
 第 40000 步的实际输出是：
 
 ```text
-data/checkpoint/train_checkpoint_step_40000.pt
+data/checkpoint/<run_name>/train_checkpoint_step_40000.pt
 ```
 
 ### 正式训练不想用合成数据

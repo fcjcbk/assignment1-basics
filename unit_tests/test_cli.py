@@ -15,6 +15,7 @@ from cs336_basics.training.config import (
     LoggingConfig,
     ModelConfig,
     OptimizerConfig,
+    RunConfig,
     TrainingConfig,
 )
 from cs336_basics.training.factory import build_model, build_optimizer
@@ -40,6 +41,7 @@ def _tiny_config(tmp_path: Path, *, valid_path: Path | None = None) -> TrainingC
         data=DataConfig(synthetic_num_tokens=128),
         checkpoint=CheckpointConfig(path=str(tmp_path / "checkpoint.pt"), save_interval=1),
         logging=LoggingConfig(log_interval=1),
+        run=RunConfig(name="cli-run"),
         eval=EvalConfig(valid_path=str(valid_path), interval=1, mode="sampled", num_batches=1, batch_size=2)
         if valid_path is not None
         else EvalConfig(),
@@ -61,7 +63,7 @@ def test_cli_train_runs_tiny_synthetic_smoke_config(tmp_path: Path):
 
     cli.main(["train", "--config", str(config_path)])
 
-    assert (tmp_path / "checkpoint_step_2.pt").exists()
+    assert (tmp_path / "cli-run" / "checkpoint_step_2.pt").exists()
 
 
 def test_cli_eval_reports_checkpoint_validation_loss(tmp_path: Path, capsys):
@@ -123,6 +125,7 @@ def test_legacy_wrappers_still_expose_training_and_data_public_surface():
     import cs336_basics.train_model as train_model
 
     assert train_model.TrainingConfig is TrainingConfig
+    assert train_model.RunConfig is RunConfig
     assert callable(train_model.train)
     assert callable(train_model.build_model)
     assert callable(train_model.evaluate_checkpoint)

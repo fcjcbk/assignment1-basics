@@ -1,9 +1,11 @@
+import json
 from pathlib import Path
 import os
 import signal
 
 import torch
 import numpy as np
+import pytest
 
 import cs336_basics.train_model as train_model
 from cs336_basics.model.funtional import save_checkpoint
@@ -15,8 +17,49 @@ from cs336_basics.train_model import (
     LoggingConfig,
     ModelConfig,
     OptimizerConfig,
+    RunConfig,
     TrainingConfig,
 )
+
+
+def _tiny_training_config(
+    tmp_path: Path,
+    *,
+    checkpoint_path: Path | None = None,
+    log_path: Path | None = None,
+    plot_path: Path | None = None,
+    run_name: str | None = None,
+) -> TrainingConfig:
+    return TrainingConfig(
+        model=ModelConfig(
+            vocab_size=32,
+            context_length=8,
+            num_layers=1,
+            d_model=16,
+            num_heads=4,
+            max_seq_len=8,
+            d_ff=32,
+        ),
+        optimizer=OptimizerConfig(
+            learning_rate=1e-3,
+            min_learning_rate=1e-4,
+            warmup_iters=1,
+            max_grad_norm=1.0,
+        ),
+        data=DataConfig(synthetic_num_tokens=128),
+        checkpoint=CheckpointConfig(path=str(checkpoint_path or tmp_path / "checkpoint.pt"), save_interval=1),
+        logging=LoggingConfig(log_interval=1, log_file=str(log_path or tmp_path / "train.log")),
+        plot=LossPlotConfig(
+            enabled=plot_path is not None,
+            path=str(plot_path or tmp_path / "loss_curve.png"),
+            interval=1,
+        ),
+        run=RunConfig(name=run_name),
+        batch_size=2,
+        total_steps=2,
+        device="cpu",
+        seed=1337,
+    )
 
 
 def test_train_writes_step_specific_checkpoints_and_log(tmp_path: Path):
@@ -42,6 +85,7 @@ def test_train_writes_step_specific_checkpoints_and_log(tmp_path: Path):
         data=DataConfig(synthetic_num_tokens=128),
         checkpoint=CheckpointConfig(path=str(checkpoint_path), save_interval=1),
         logging=LoggingConfig(log_interval=1, log_file=str(log_path)),
+        run=RunConfig(name="checkpoint-log-run"),
         batch_size=2,
         total_steps=2,
         device="cpu",
@@ -50,13 +94,14 @@ def test_train_writes_step_specific_checkpoints_and_log(tmp_path: Path):
 
     train_model.train(config)
 
-    step_1_checkpoint = torch.load(tmp_path / "checkpoint_step_1.pt")
-    step_2_checkpoint = torch.load(tmp_path / "checkpoint_step_2.pt")
+    run_dir = tmp_path / "checkpoint-log-run"
+    step_1_checkpoint = torch.load(run_dir / "checkpoint_step_1.pt")
+    step_2_checkpoint = torch.load(run_dir / "checkpoint_step_2.pt")
     assert step_1_checkpoint["iteration"] == 1
     assert step_2_checkpoint["iteration"] == 2
     assert "model_state" in step_2_checkpoint
     assert "optimizer_state" in step_2_checkpoint
-    assert "step=2/2" in log_path.read_text()
+    assert "step=2/2" in (run_dir / "train.log").read_text()
 
 
 def test_train_saves_current_step_checkpoint_before_exiting_on_sigint(tmp_path: Path, monkeypatch):
@@ -93,6 +138,7 @@ def test_train_saves_current_step_checkpoint_before_exiting_on_sigint(tmp_path: 
         data=DataConfig(synthetic_num_tokens=128),
         checkpoint=CheckpointConfig(path=str(checkpoint_path), save_interval=0),
         logging=LoggingConfig(log_interval=1),
+        run=RunConfig(name="sigint-run"),
         batch_size=2,
         total_steps=4,
         device="cpu",
@@ -101,9 +147,9 @@ def test_train_saves_current_step_checkpoint_before_exiting_on_sigint(tmp_path: 
 
     train_model.train(config)
 
-    checkpoint = torch.load(tmp_path / "checkpoint_step_1.pt")
+    checkpoint = torch.load(tmp_path / "sigint-run" / "checkpoint_step_1.pt")
     assert checkpoint["iteration"] == 1
-    assert not (tmp_path / "checkpoint_step_2.pt").exists()
+    assert not (tmp_path / "sigint-run" / "checkpoint_step_2.pt").exists()
 
 
 def test_train_logs_validation_loss_when_eval_config_is_enabled(tmp_path: Path):
@@ -132,6 +178,7 @@ def test_train_logs_validation_loss_when_eval_config_is_enabled(tmp_path: Path):
         checkpoint=CheckpointConfig(path=str(checkpoint_path), save_interval=0),
         logging=LoggingConfig(log_interval=1, log_file=str(log_path)),
         eval=EvalConfig(valid_path=str(valid_path), interval=1, mode="sampled", num_batches=1, batch_size=2),
+        run=RunConfig(name="validation-log-run"),
         batch_size=2,
         total_steps=2,
         device="cpu",
@@ -140,7 +187,7 @@ def test_train_logs_validation_loss_when_eval_config_is_enabled(tmp_path: Path):
 
     train_model.train(config)
 
-    log_text = log_path.read_text()
+    log_text = (tmp_path / "validation-log-run" / "train.log").read_text()
     assert "val_loss=" in log_text
     assert "val_ppl=" in log_text
     assert "eval_tokens=16" in log_text
@@ -173,6 +220,7 @@ def test_train_writes_matplotlib_loss_curve_when_plot_config_is_enabled(tmp_path
         logging=LoggingConfig(log_interval=1),
         eval=EvalConfig(valid_path=str(valid_path), interval=1, mode="sampled", num_batches=1, batch_size=2),
         plot=LossPlotConfig(enabled=True, path=str(plot_path), interval=1, width=480, height=320, dpi=100),
+        run=RunConfig(name="plot-run"),
         batch_size=2,
         total_steps=2,
         device="cpu",
@@ -181,7 +229,58 @@ def test_train_writes_matplotlib_loss_curve_when_plot_config_is_enabled(tmp_path
 
     train_model.train(config)
 
-    assert plot_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    assert (tmp_path / "plot-run" / "loss_curve.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_train_uses_manual_run_name_for_all_training_artifacts(tmp_path: Path):
+    checkpoint_path = tmp_path / "checkpoints" / "model.pt"
+    log_path = tmp_path / "logs" / "train.log"
+    plot_path = tmp_path / "plots" / "loss_curve.png"
+
+    config = _tiny_training_config(
+        tmp_path,
+        checkpoint_path=checkpoint_path,
+        log_path=log_path,
+        plot_path=plot_path,
+        run_name="smoke-run",
+    )
+
+    train_model.train(config)
+
+    assert (tmp_path / "checkpoints" / "smoke-run" / "model_step_1.pt").exists()
+    assert "run=smoke-run" in (tmp_path / "logs" / "smoke-run" / "train.log").read_text()
+    assert (tmp_path / "plots" / "smoke-run" / "loss_curve.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_train_generates_unique_run_names_when_not_configured(tmp_path: Path):
+    train_model.train(_tiny_training_config(tmp_path))
+    train_model.train(_tiny_training_config(tmp_path))
+
+    run_dirs = sorted(path for path in tmp_path.iterdir() if path.is_dir())
+
+    assert len(run_dirs) == 2
+    assert run_dirs[0].name != run_dirs[1].name
+    assert all(path.name.startswith("train-") for path in run_dirs)
+    assert all((path / "checkpoint_step_1.pt").exists() for path in run_dirs)
+    assert all((path / "train.log").exists() for path in run_dirs)
+
+
+def test_load_config_loads_manual_run_name(tmp_path: Path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"run": {"name": "smoke-run"}}), encoding="utf-8")
+
+    config = train_model.load_config(config_path)
+
+    assert config.run.name == "smoke-run"
+
+
+@pytest.mark.parametrize("run_name", ["", ".", "..", "nested/name", r"nested\name", "bad..name", "bad name"])
+def test_load_config_rejects_unsafe_run_names(tmp_path: Path, run_name: str):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"run": {"name": run_name}}), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="run.name"):
+        train_model.load_config(config_path)
 
 
 def test_evaluate_checkpoint_loads_checkpoint_and_returns_validation_loss(tmp_path: Path):

@@ -4,7 +4,10 @@ import logging
 import signal
 import time
 from collections.abc import Callable
+from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
+from secrets import token_hex
 from typing import Any
 
 import numpy as np
@@ -20,7 +23,7 @@ from cs336_basics.model.funtional import (
     save_checkpoint,
 )
 from cs336_basics.training.checkpoint_eval import evaluate_model_on_validation, format_validation_result
-from cs336_basics.training.config import TrainingConfig
+from cs336_basics.training.config import TrainingConfig, validate_run_name
 from cs336_basics.training.data import load_dataset, load_validation_dataset
 from cs336_basics.training.factory import build_model, build_optimizer
 from cs336_basics.training.plotting import LossCurvePlotter
@@ -42,7 +45,8 @@ class Trainer:
         self.logger = logger
 
     def train(self) -> None:
-        config = self.config
+        config = _config_for_training_run(self.config)
+        self.config = config
         logger = self.logger or configure_logging(config.logging)
         device = resolve_device(config.device)
         set_seed(config.seed)
@@ -68,9 +72,10 @@ class Trainer:
         loss_plotter = LossCurvePlotter(config.plot, config.total_steps) if config.plot.enabled else None
         if loss_plotter is not None:
             logger.info(
-                "Writing live matplotlib loss curve to %s every %d step(s)",
+                "Writing matplotlib training monitor to %s every %d step(s)%s",
                 loss_plotter.path,
                 config.plot.interval,
+                " and refreshing an interactive window" if config.plot.show else "",
             )
 
         model.train()
@@ -89,7 +94,8 @@ class Trainer:
         original_signal_handlers = _install_shutdown_handlers(request_shutdown)
 
         logger.info(
-            "Starting training: steps=%d, batch_size=%d, context_length=%d, device=%s",
+            "Starting training: run=%s, steps=%d, batch_size=%d, context_length=%d, device=%s",
+            config.run.name,
             config.total_steps,
             config.batch_size,
             config.model.context_length,
@@ -101,14 +107,22 @@ class Trainer:
                 lr = self._set_learning_rate(optimizer, step)
                 train_loss = self._train_step(model, optimizer, dataset, device)
                 completed_step = step
+                elapsed = time.time() - start_time
+                completed_training_steps = step - start_step
+                average_steps_per_sec = completed_training_steps / max(elapsed, 1e-8)
 
                 if loss_plotter is not None:
-                    loss_plotter.record_train_loss(step, train_loss)
+                    loss_plotter.record_train_loss(
+                        step,
+                        train_loss,
+                        learning_rate=lr,
+                        steps_per_second=average_steps_per_sec,
+                        elapsed_seconds=elapsed,
+                    )
                     loss_plotter.maybe_render(step)
 
                 if step % config.logging.log_interval == 0 or step == 1:
                     now = time.time()
-                    elapsed = now - start_time
                     steps_per_sec = config.logging.log_interval / max(now - last_log_time, 1e-8)
                     last_log_time = now
                     logger.info(
@@ -230,6 +244,34 @@ class Trainer:
 
 def train(config: TrainingConfig, sample_batch_fn: BatchSampler = sample_train_data) -> None:
     Trainer(config, sample_batch_fn=sample_batch_fn).train()
+
+
+def _config_for_training_run(config: TrainingConfig) -> TrainingConfig:
+    run_name = _resolve_run_name(config)
+    checkpoint_path = _artifact_path_for_run(Path(config.checkpoint.path), run_name)
+    logging_config = config.logging
+    if config.logging.log_file is not None:
+        log_file = _artifact_path_for_run(Path(config.logging.log_file), run_name)
+        logging_config = replace(config.logging, log_file=str(log_file))
+
+    return replace(
+        config,
+        checkpoint=replace(config.checkpoint, path=str(checkpoint_path)),
+        logging=logging_config,
+        plot=replace(config.plot, path=str(_artifact_path_for_run(Path(config.plot.path), run_name))),
+        run=replace(config.run, name=run_name),
+    )
+
+
+def _resolve_run_name(config: TrainingConfig) -> str:
+    if config.run.name is not None:
+        validate_run_name(config.run.name)
+        return config.run.name
+    return f"train-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{token_hex(3)}"
+
+
+def _artifact_path_for_run(path: Path, run_name: str) -> Path:
+    return path.parent / run_name / path.name
 
 
 def _checkpoint_path_for_step(checkpoint_path: Path, step: int) -> Path:

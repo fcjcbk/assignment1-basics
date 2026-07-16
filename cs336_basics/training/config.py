@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any
+
+
+_RUN_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 @dataclass
@@ -66,9 +70,19 @@ class LossPlotConfig:
     enabled: bool = False
     path: str = "log/loss_curve.png"
     interval: int = 10
-    width: int = 960
-    height: int = 540
+    width: int = 1000
+    height: int = 720
     dpi: int = 120
+    show: bool = False
+    pause_seconds: float = 0.001
+
+
+@dataclass
+class RunConfig:
+    name: str | None = None
+
+    def __post_init__(self) -> None:
+        validate_run_name(self.name)
 
 
 @dataclass
@@ -80,6 +94,7 @@ class TrainingConfig:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     eval: EvalConfig = field(default_factory=EvalConfig)
     plot: LossPlotConfig = field(default_factory=LossPlotConfig)
+    run: RunConfig = field(default_factory=RunConfig)
     batch_size: int = 8
     total_steps: int = 100
     device: str = "auto"
@@ -135,3 +150,12 @@ def _coerce_optional_none(value: Any, field_type: Any) -> Any:
     if "NoneType" in str(field_type) or "None" in str(field_type):
         return None
     return value
+
+
+def validate_run_name(name: str | None) -> None:
+    if name is None:
+        return
+    if not isinstance(name, str):
+        raise ValueError("run.name must be a string or null")
+    if name == "" or name in {".", ".."} or ".." in name or not _RUN_NAME_RE.fullmatch(name):
+        raise ValueError("run.name must be a non-empty slug using only letters, numbers, '.', '_', and '-'")
