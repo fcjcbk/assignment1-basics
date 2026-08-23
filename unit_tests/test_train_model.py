@@ -6,6 +6,7 @@ import signal
 import torch
 import numpy as np
 import pytest
+from torchinfo import summary as torchinfo_summary
 
 import cs336_basics.train_model as train_model
 from cs336_basics.model.funtional import save_checkpoint
@@ -60,6 +61,27 @@ def _tiny_training_config(
         device="cpu",
         seed=1337,
     )
+
+
+def test_torchinfo_summary_outputs_current_model_structure():
+    config_path = Path(__file__).resolve().parents[1] / "train_config.json"
+    config = train_model.load_config(config_path)
+    model = train_model.build_model(config.model, "cpu")
+
+    model_summary = torchinfo_summary(
+        model,
+        input_size=(1, config.model.context_length),
+        dtypes=[torch.long],
+        device="cpu",
+        depth=4,
+        verbose=1,
+    )
+
+    summary_text = str(model_summary)
+    assert "TransformerLanguageModel" in summary_text
+    assert "MultiHeadSelfAttentionWithRoPE" in summary_text
+    assert "SwiGLu" in summary_text
+    assert model_summary.total_params == sum(parameter.numel() for parameter in model.parameters())
 
 
 def test_train_writes_step_specific_checkpoints_and_log(tmp_path: Path):
