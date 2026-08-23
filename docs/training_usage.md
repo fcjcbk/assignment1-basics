@@ -117,6 +117,10 @@ data/checkpoint/tinystories-debug/train_checkpoint_step_1000.pt
 
 同一次训练的日志和训练监控图也会写入对应 run 子目录，例如 `log/tinystories-debug/train.log` 和 `log/tinystories-debug/loss_curve.png`。
 
+启用 TensorBoard 时，event 文件会写入 `tensorboard.log_dir/<run_name>/`。例如根目录配置为
+`log/tensorboard`、run name 为 `tinystories-debug` 时，实际目录是
+`log/tensorboard/tinystories-debug/`。
+
 训练支持 `checkpoint.resume_from` 继续训练：
 
 ```json
@@ -133,6 +137,7 @@ data/checkpoint/tinystories-debug/train_checkpoint_step_1000.pt
 ```
 
 `checkpoint.resume_from` 是输入 checkpoint 路径，不会被 run name 自动改写。若希望继续训练的后续产物仍写入原 run 目录，请显式设置同一个 `run.name`。
+TensorBoard 会从 checkpoint step 的下一步清理该 run 中可能重叠的事件，再继续记录新的指标。
 
 ### eval
 
@@ -294,6 +299,28 @@ uv run cs336_basics/cli.py encode-validation \
 
 `plot.show=true` 需要当前 Python/Matplotlib 能使用交互式图形后端；在无桌面会话或只配置了 `Agg` 后端的环境里，建议保持默认的 `false`。
 
+TensorBoard 由 `tensorboard` 配置控制。启用后记录 train/validation loss、learning rate、steps/s 和 elapsed time：
+
+```json
+{
+  "tensorboard": {
+    "enabled": true,
+    "log_dir": "log/tensorboard",
+    "interval": 10,
+    "flush_secs": 30
+  }
+}
+```
+
+启动 TensorBoard 并查看所有 run：
+
+```sh
+uv run tensorboard --logdir log/tensorboard
+```
+
+`tensorboard.interval` 控制训练标量的写入间隔；第 1 步和最后一步始终写入。validation loss 仍按
+`eval.interval` 产生。writer 会在正常完成、中断或异常退出时关闭并刷新。
+
 日志文件由 `logging.log_file` 控制，默认同时输出到 stdout。
 
 ## 代码结构
@@ -307,6 +334,7 @@ cs336_basics/training/factory.py          # build_model、build_optimizer
 cs336_basics/training/data.py             # token dataset 加载
 cs336_basics/training/checkpoint_eval.py  # checkpoint 验证 loss
 cs336_basics/training/plotting.py         # loss curve 渲染
+cs336_basics/training/tensorboard_monitor.py # TensorBoard event 写入
 cs336_basics/training/trainer.py          # Trainer 和训练循环
 ```
 

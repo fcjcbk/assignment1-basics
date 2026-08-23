@@ -16,6 +16,7 @@ from cs336_basics.training.config import (
     ModelConfig,
     OptimizerConfig,
     RunConfig,
+    TensorBoardConfig,
     TrainingConfig,
 )
 from cs336_basics.training.factory import build_model, build_optimizer
@@ -126,6 +127,7 @@ def test_legacy_wrappers_still_expose_training_and_data_public_surface():
 
     assert train_model.TrainingConfig is TrainingConfig
     assert train_model.RunConfig is RunConfig
+    assert train_model.TensorBoardConfig is TensorBoardConfig
     assert callable(train_model.train)
     assert callable(train_model.build_model)
     assert callable(train_model.evaluate_checkpoint)

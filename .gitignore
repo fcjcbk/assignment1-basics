@@ -165,5 +165,6 @@ cython_debug/
 a.txt
 
 data/
+log/
 
 .DS_Store

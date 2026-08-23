@@ -28,6 +28,7 @@ from cs336_basics.training.data import load_dataset, load_validation_dataset
 from cs336_basics.training.factory import build_model, build_optimizer
 from cs336_basics.training.plotting import LossCurvePlotter
 from cs336_basics.training.runtime import configure_logging, resolve_device, set_seed
+from cs336_basics.training.tensorboard_monitor import TensorBoardMonitor
 
 
 BatchSampler = Callable[..., tuple[torch.Tensor, torch.Tensor]]
@@ -78,9 +79,9 @@ class Trainer:
                 " and refreshing an interactive window" if config.plot.show else "",
             )
 
+        tensorboard_monitor: TensorBoardMonitor | None = None
+
         model.train()
-        start_time = time.time()
-        last_log_time = start_time
         completed_step = start_step
         last_checkpoint_step: int | None = None
         shutdown_requested = False
@@ -93,16 +94,28 @@ class Trainer:
 
         original_signal_handlers = _install_shutdown_handlers(request_shutdown)
 
-        logger.info(
-            "Starting training: run=%s, steps=%d, batch_size=%d, context_length=%d, device=%s",
-            config.run.name,
-            config.total_steps,
-            config.batch_size,
-            config.model.context_length,
-            device,
-        )
-
         try:
+            if config.tensorboard.enabled:
+                purge_step = start_step + 1 if start_step > 0 else None
+                tensorboard_monitor = TensorBoardMonitor(config.tensorboard, purge_step=purge_step)
+                tensorboard_monitor.record_config(config, step=purge_step or 0)
+                logger.info(
+                    "Writing TensorBoard events to %s every %d step(s)",
+                    tensorboard_monitor.log_dir,
+                    config.tensorboard.interval,
+                )
+
+            logger.info(
+                "Starting training: run=%s, steps=%d, batch_size=%d, context_length=%d, device=%s",
+                config.run.name,
+                config.total_steps,
+                config.batch_size,
+                config.model.context_length,
+                device,
+            )
+            start_time = time.time()
+            last_log_time = start_time
+
             for step in range(start_step + 1, config.total_steps + 1):
                 lr = self._set_learning_rate(optimizer, step)
                 train_loss = self._train_step(model, optimizer, dataset, device)
@@ -120,6 +133,16 @@ class Trainer:
                         elapsed_seconds=elapsed,
                     )
                     loss_plotter.maybe_render(step)
+
+                if tensorboard_monitor is not None:
+                    tensorboard_monitor.record_train_metrics(
+                        step,
+                        train_loss,
+                        learning_rate=lr,
+                        steps_per_second=average_steps_per_sec,
+                        elapsed_seconds=elapsed,
+                        force=step == config.total_steps,
+                    )
 
                 if step % config.logging.log_interval == 0 or step == 1:
                     now = time.time()
@@ -146,6 +169,8 @@ class Trainer:
                     if loss_plotter is not None:
                         loss_plotter.record_validation_loss(step, eval_result.loss)
                         loss_plotter.maybe_render(step, force=True)
+                    if tensorboard_monitor is not None:
+                        tensorboard_monitor.record_validation_loss(step, eval_result.loss)
 
                 saved_checkpoint_path: Path | None = None
                 if config.checkpoint.save_interval > 0 and step % config.checkpoint.save_interval == 0:
@@ -188,9 +213,15 @@ class Trainer:
                 )
             logger.info("Interrupted. Latest completed checkpoint saved to %s", interrupted_checkpoint_path)
         finally:
-            if loss_plotter is not None:
-                loss_plotter.maybe_render(completed_step, force=True)
-            _restore_signal_handlers(original_signal_handlers)
+            try:
+                if loss_plotter is not None:
+                    loss_plotter.maybe_render(completed_step, force=True)
+            finally:
+                try:
+                    if tensorboard_monitor is not None:
+                        tensorboard_monitor.close()
+                finally:
+                    _restore_signal_handlers(original_signal_handlers)
 
     def _validate_model_sequence_lengths(self) -> None:
         if self.config.model.max_seq_len < self.config.model.context_length:
@@ -254,11 +285,19 @@ def _config_for_training_run(config: TrainingConfig) -> TrainingConfig:
         log_file = _artifact_path_for_run(Path(config.logging.log_file), run_name)
         logging_config = replace(config.logging, log_file=str(log_file))
 
+    tensorboard_config = config.tensorboard
+    if config.tensorboard.enabled:
+        tensorboard_config = replace(
+            config.tensorboard,
+            log_dir=str(Path(config.tensorboard.log_dir) / run_name),
+        )
+
     return replace(
         config,
         checkpoint=replace(config.checkpoint, path=str(checkpoint_path)),
         logging=logging_config,
         plot=replace(config.plot, path=str(_artifact_path_for_run(Path(config.plot.path), run_name))),
+        tensorboard=tensorboard_config,
         run=replace(config.run, name=run_name),
     )
 

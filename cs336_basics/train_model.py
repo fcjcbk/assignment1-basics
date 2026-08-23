@@ -17,6 +17,7 @@ from cs336_basics.training.config import (
     ModelConfig,
     OptimizerConfig,
     RunConfig,
+    TensorBoardConfig,
     TrainingConfig,
     load_config,
     print_example_config,
@@ -25,6 +26,7 @@ from cs336_basics.training.data import load_dataset, load_validation_dataset
 from cs336_basics.training.factory import build_model, build_optimizer
 from cs336_basics.training.plotting import LossCurvePlotter, render_loss_curve_png
 from cs336_basics.training.runtime import configure_logging, resolve_device, set_seed
+from cs336_basics.training.tensorboard_monitor import TensorBoardMonitor
 from cs336_basics.training.trainer import (
     Trainer,
     _checkpoint_path_for_step,
@@ -84,6 +86,8 @@ __all__ = [
     "ModelConfig",
     "OptimizerConfig",
     "RunConfig",
+    "TensorBoardConfig",
+    "TensorBoardMonitor",
     "Trainer",
     "TrainingConfig",
     "_checkpoint_path_for_step",

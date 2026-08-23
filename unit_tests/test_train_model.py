@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 import os
 import signal
@@ -6,6 +7,7 @@ import signal
 import torch
 import numpy as np
 import pytest
+from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 from torchinfo import summary as torchinfo_summary
 
 import cs336_basics.train_model as train_model
@@ -19,6 +21,7 @@ from cs336_basics.train_model import (
     ModelConfig,
     OptimizerConfig,
     RunConfig,
+    TensorBoardConfig,
     TrainingConfig,
 )
 
@@ -29,6 +32,7 @@ def _tiny_training_config(
     checkpoint_path: Path | None = None,
     log_path: Path | None = None,
     plot_path: Path | None = None,
+    tensorboard_log_dir: Path | None = None,
     run_name: str | None = None,
 ) -> TrainingConfig:
     return TrainingConfig(
@@ -54,6 +58,12 @@ def _tiny_training_config(
             enabled=plot_path is not None,
             path=str(plot_path or tmp_path / "loss_curve.png"),
             interval=1,
+        ),
+        tensorboard=TensorBoardConfig(
+            enabled=tensorboard_log_dir is not None,
+            log_dir=str(tensorboard_log_dir or tmp_path / "tensorboard"),
+            interval=1,
+            flush_secs=1,
         ),
         run=RunConfig(name=run_name),
         batch_size=2,
@@ -254,6 +264,60 @@ def test_train_writes_matplotlib_loss_curve_when_plot_config_is_enabled(tmp_path
     assert (tmp_path / "plot-run" / "loss_curve.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
 
 
+def test_train_writes_tensorboard_metrics_to_run_directory(tmp_path: Path):
+    valid_path = tmp_path / "valid.npy"
+    tensorboard_log_dir = tmp_path / "tensorboard"
+    np.save(valid_path, np.arange(128, dtype=np.int64) % 32)
+    config = _tiny_training_config(
+        tmp_path,
+        tensorboard_log_dir=tensorboard_log_dir,
+        run_name="tensorboard-run",
+    )
+    config = replace(
+        config,
+        eval=EvalConfig(valid_path=str(valid_path), interval=1, mode="sampled", num_batches=1, batch_size=2),
+    )
+
+    train_model.train(config)
+
+    events = EventAccumulator(str(tensorboard_log_dir / "tensorboard-run"))
+    events.Reload()
+    scalar_tags = set(events.Tags()["scalars"])
+    assert {
+        "Loss/train",
+        "Loss/validation",
+        "Optimization/learning_rate",
+        "Performance/steps_per_second",
+        "Performance/elapsed_seconds",
+    } <= scalar_tags
+    assert [event.step for event in events.Scalars("Loss/train")] == [1, 2]
+    assert [event.step for event in events.Scalars("Loss/validation")] == [1, 2]
+
+
+def test_resumed_training_purges_overlapping_tensorboard_steps(tmp_path: Path):
+    tensorboard_log_dir = tmp_path / "tensorboard"
+    first_config = _tiny_training_config(
+        tmp_path,
+        tensorboard_log_dir=tensorboard_log_dir,
+        run_name="resume-run",
+    )
+    train_model.train(replace(first_config, total_steps=3))
+
+    resumed_config = replace(
+        first_config,
+        checkpoint=replace(
+            first_config.checkpoint,
+            resume_from=str(tmp_path / "resume-run" / "checkpoint_step_2.pt"),
+        ),
+        total_steps=4,
+    )
+    train_model.train(resumed_config)
+
+    events = EventAccumulator(str(tensorboard_log_dir / "resume-run"))
+    events.Reload()
+    assert [event.step for event in events.Scalars("Loss/train")] == [1, 2, 3, 4]
+
+
 def test_train_uses_manual_run_name_for_all_training_artifacts(tmp_path: Path):
     checkpoint_path = tmp_path / "checkpoints" / "model.pt"
     log_path = tmp_path / "logs" / "train.log"
@@ -294,6 +358,32 @@ def test_load_config_loads_manual_run_name(tmp_path: Path):
     config = train_model.load_config(config_path)
 
     assert config.run.name == "smoke-run"
+
+
+def test_load_config_loads_tensorboard_settings(tmp_path: Path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "tensorboard": {
+                    "enabled": True,
+                    "log_dir": "custom/events",
+                    "interval": 25,
+                    "flush_secs": 5,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = train_model.load_config(config_path)
+
+    assert config.tensorboard == TensorBoardConfig(
+        enabled=True,
+        log_dir="custom/events",
+        interval=25,
+        flush_secs=5,
+    )
 
 
 @pytest.mark.parametrize("run_name", ["", ".", "..", "nested/name", r"nested\name", "bad..name", "bad name"])

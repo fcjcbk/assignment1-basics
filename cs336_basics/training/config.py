@@ -78,6 +78,22 @@ class LossPlotConfig:
 
 
 @dataclass
+class TensorBoardConfig:
+    enabled: bool = False
+    log_dir: str = "log/tensorboard"
+    interval: int = 10
+    flush_secs: int = 30
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.log_dir, str) or not self.log_dir.strip():
+            raise ValueError("tensorboard.log_dir must be a non-empty string")
+        if self.interval <= 0:
+            raise ValueError("tensorboard.interval must be positive")
+        if self.flush_secs <= 0:
+            raise ValueError("tensorboard.flush_secs must be positive")
+
+
+@dataclass
 class RunConfig:
     name: str | None = None
 
@@ -94,6 +110,7 @@ class TrainingConfig:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     eval: EvalConfig = field(default_factory=EvalConfig)
     plot: LossPlotConfig = field(default_factory=LossPlotConfig)
+    tensorboard: TensorBoardConfig = field(default_factory=TensorBoardConfig)
     run: RunConfig = field(default_factory=RunConfig)
     batch_size: int = 8
     total_steps: int = 100

@@ -52,6 +52,12 @@
     "show": true,
     "pause_seconds": 0.001
   },
+  "tensorboard": {
+    "enabled": true,
+    "log_dir": "log/tensorboard",
+    "interval": 100,
+    "flush_secs": 30
+  },
   "batch_size": 32,
   "total_steps": 40000,
   "device": "mps",
