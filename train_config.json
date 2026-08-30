@@ -45,12 +45,9 @@
   "plot": {
     "enabled": true,
     "path": "log/loss_curve.png",
-    "interval": 100,
     "width": 1000,
     "height": 720,
-    "dpi": 120,
-    "show": true,
-    "pause_seconds": 0.001
+    "dpi": 120
   },
   "wandb": {
     "enabled": true,

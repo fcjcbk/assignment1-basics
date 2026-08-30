@@ -72,12 +72,7 @@ class Trainer:
         checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
         loss_plotter = LossCurvePlotter(config.plot, config.total_steps) if config.plot.enabled else None
         if loss_plotter is not None:
-            logger.info(
-                "Writing matplotlib training monitor to %s every %d step(s)%s",
-                loss_plotter.path,
-                config.plot.interval,
-                " and refreshing an interactive window" if config.plot.show else "",
-            )
+            logger.info("Writing final matplotlib training monitor to %s", loss_plotter.path)
 
         wandb_monitor: WandbMonitor | None = None
 
@@ -132,7 +127,6 @@ class Trainer:
                         steps_per_second=average_steps_per_sec,
                         elapsed_seconds=elapsed,
                     )
-                    loss_plotter.maybe_render(step)
 
                 if wandb_monitor is not None:
                     wandb_monitor.record_train_metrics(
@@ -168,7 +162,6 @@ class Trainer:
                     logger.info(format_validation_result(eval_result, step=step))
                     if loss_plotter is not None:
                         loss_plotter.record_validation_loss(step, eval_result.loss)
-                        loss_plotter.maybe_render(step, force=True)
                     if wandb_monitor is not None:
                         wandb_monitor.record_validation_loss(step, eval_result.loss)
 
@@ -189,8 +182,6 @@ class Trainer:
                         step,
                         saved_checkpoint_path,
                     )
-                    if loss_plotter is not None:
-                        loss_plotter.maybe_render(step, force=True)
                     return
 
             final_checkpoint_path: Path
@@ -217,7 +208,7 @@ class Trainer:
         finally:
             try:
                 if loss_plotter is not None:
-                    loss_plotter.maybe_render(completed_step, force=True)
+                    loss_plotter.render()
             finally:
                 try:
                     if wandb_monitor is not None:

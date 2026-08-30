@@ -69,12 +69,9 @@ class EvalConfig:
 class LossPlotConfig:
     enabled: bool = False
     path: str = "log/loss_curve.png"
-    interval: int = 10
     width: int = 1000
     height: int = 720
     dpi: int = 120
-    show: bool = False
-    pause_seconds: float = 0.001
 
 
 @dataclass

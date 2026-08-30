@@ -23,6 +23,7 @@ from cs336_basics.train_model import (
     TrainingConfig,
     WandbConfig,
 )
+from cs336_basics.training.plotting import LossCurvePlotter
 
 
 class _FakeWandbRun:
@@ -86,7 +87,6 @@ def _tiny_training_config(
         plot=LossPlotConfig(
             enabled=plot_path is not None,
             path=str(plot_path or tmp_path / "loss_curve.png"),
-            interval=1,
         ),
         wandb=WandbConfig(
             enabled=wandb_log_dir is not None,
@@ -281,7 +281,7 @@ def test_train_writes_matplotlib_loss_curve_when_plot_config_is_enabled(tmp_path
         checkpoint=CheckpointConfig(path=str(checkpoint_path), save_interval=0),
         logging=LoggingConfig(log_interval=1),
         eval=EvalConfig(valid_path=str(valid_path), interval=1, mode="sampled", num_batches=1, batch_size=2),
-        plot=LossPlotConfig(enabled=True, path=str(plot_path), interval=1, width=480, height=320, dpi=100),
+        plot=LossPlotConfig(enabled=True, path=str(plot_path), width=480, height=320, dpi=100),
         run=RunConfig(name="plot-run"),
         batch_size=2,
         total_steps=2,
@@ -292,6 +292,27 @@ def test_train_writes_matplotlib_loss_curve_when_plot_config_is_enabled(tmp_path
     train_model.train(config)
 
     assert (tmp_path / "plot-run" / "loss_curve.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_train_renders_matplotlib_loss_curve_only_once_at_end(tmp_path: Path, monkeypatch):
+    render_train_point_counts: list[int] = []
+    original_render = LossCurvePlotter.render
+
+    def track_render(plotter: LossCurvePlotter) -> None:
+        render_train_point_counts.append(len(plotter.train_points))
+        original_render(plotter)
+
+    monkeypatch.setattr(LossCurvePlotter, "render", track_render)
+
+    train_model.train(
+        _tiny_training_config(
+            tmp_path,
+            plot_path=tmp_path / "loss_curve.png",
+            run_name="plot-once-run",
+        )
+    )
+
+    assert render_train_point_counts == [2]
 
 
 def test_train_reports_metrics_and_config_to_wandb(tmp_path: Path, monkeypatch):

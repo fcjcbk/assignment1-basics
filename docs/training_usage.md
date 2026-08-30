@@ -280,24 +280,19 @@ uv run cs336_basics/cli.py encode-validation \
 - `auto`：优先 CUDA，其次 MPS，最后 CPU。
 - `cpu`、`mps`、`cuda` 或其他 PyTorch device string。
 
-训练监控图由 `plot` 配置控制。启用后会持续刷新一张 PNG 仪表盘：上半部分显示 raw train loss、平滑后的 train loss trend、validation loss 和 best validation 点；下半部分显示 learning rate，并在底部展示最新 train/val loss、step/s、elapsed/ETA 与总进度。若将 `plot.show` 设为 `true`，训练时还会打开一张 Matplotlib 实时窗口，并按同一刷新节奏更新窗口和 `plot.path` 指向的 PNG 文件。
+训练监控图由 `plot` 配置控制。启用后只在训练结束时生成一张最终 PNG 仪表盘：上半部分显示 raw train loss、平滑后的 train loss trend、validation loss 和 best validation 点；下半部分显示 learning rate，并在底部展示最新 train/val loss、step/s、elapsed/ETA 与总进度。训练过程中不会实时刷新图片或打开 Matplotlib 窗口。
 
 ```json
 {
   "plot": {
     "enabled": true,
     "path": "log/loss_curve.png",
-    "interval": 100,
     "width": 1000,
     "height": 720,
-    "dpi": 120,
-    "show": false,
-    "pause_seconds": 0.001
+    "dpi": 120
   }
 }
 ```
-
-`plot.show=true` 需要当前 Python/Matplotlib 能使用交互式图形后端；在无桌面会话或只配置了 `Agg` 后端的环境里，建议保持默认的 `false`。
 
 W&B 由 `wandb` 配置控制。启用后记录 train/validation loss、learning rate、steps/s 和 elapsed time，
 并把完整训练配置保存为可筛选的 run config：

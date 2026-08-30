@@ -9,16 +9,12 @@ from cs336_basics.training.config import LossPlotConfig
 
 class LossCurvePlotter:
     def __init__(self, config: LossPlotConfig, total_steps: int):
-        if config.interval <= 0:
-            raise ValueError("plot.interval must be positive")
         if config.width < 320:
             raise ValueError("plot.width must be at least 320")
         if config.height < 240:
             raise ValueError("plot.height must be at least 240")
         if config.dpi <= 0:
             raise ValueError("plot.dpi must be positive")
-        if config.pause_seconds < 0:
-            raise ValueError("plot.pause_seconds must be non-negative")
 
         self.config = config
         self.total_steps = total_steps
@@ -29,8 +25,7 @@ class LossCurvePlotter:
         self.steps_per_second_points: list[tuple[int, float]] = []
         self.elapsed_seconds: float | None = None
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._plt = _load_matplotlib_pyplot(interactive=config.show)
-        self._live_figure: Any | None = None
+        self._plt = _load_matplotlib_pyplot()
 
     def record_train_loss(
         self,
@@ -52,15 +47,7 @@ class LossCurvePlotter:
     def record_validation_loss(self, step: int, loss: float) -> None:
         self._append_point(self.validation_points, step, loss)
 
-    def maybe_render(self, step: int, force: bool = False) -> None:
-        if force or step == 1 or step % self.config.interval == 0:
-            self.render()
-
     def render(self) -> None:
-        if self.config.show:
-            self._render_live_monitor()
-            return
-
         render_loss_curve_png(
             plt=self._plt,
             train_points=self.train_points,
@@ -74,29 +61,6 @@ class LossCurvePlotter:
             height=self.config.height,
             dpi=self.config.dpi,
         )
-
-    def _render_live_monitor(self) -> None:
-        figure_size = (self.config.width / self.config.dpi, self.config.height / self.config.dpi)
-        if self._live_figure is None or not self._plt.fignum_exists(self._live_figure.number):
-            self._live_figure = self._plt.figure(figsize=figure_size, dpi=self.config.dpi)
-        else:
-            self._live_figure.set_size_inches(*figure_size, forward=True)
-            self._live_figure.set_dpi(self.config.dpi)
-            self._live_figure.clear()
-
-        _draw_training_monitor(
-            figure=self._live_figure,
-            train_points=self.train_points,
-            validation_points=self.validation_points,
-            learning_rate_points=self.learning_rate_points,
-            steps_per_second_points=self.steps_per_second_points,
-            elapsed_seconds=self.elapsed_seconds,
-            total_steps=self.total_steps,
-        )
-        _save_figure_png(self._live_figure, self.path)
-        self._live_figure.canvas.draw_idle()
-        self._plt.show(block=False)
-        self._plt.pause(self.config.pause_seconds)
 
     @staticmethod
     def _append_point(points: list[tuple[int, float]], step: int, loss: float) -> None:
@@ -247,17 +211,14 @@ def _save_figure_png(figure: Any, path: Path) -> None:
     tmp_path.replace(path)
 
 
-def _load_matplotlib_pyplot(*, interactive: bool) -> Any:
+def _load_matplotlib_pyplot() -> Any:
     try:
         import matplotlib
 
-        if not interactive:
-            matplotlib.use("Agg", force=True)
+        matplotlib.use("Agg", force=True)
         import matplotlib.pyplot as plt
     except ImportError as exc:
         raise RuntimeError("matplotlib is required when plot.enabled is true") from exc
-    if interactive:
-        plt.ion()
     return plt
 
 
