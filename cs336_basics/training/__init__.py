@@ -12,16 +12,16 @@ from cs336_basics.training.config import (
     ModelConfig,
     OptimizerConfig,
     RunConfig,
-    TensorBoardConfig,
     TrainingConfig,
+    WandbConfig,
     load_config,
     print_example_config,
 )
 from cs336_basics.training.data import load_dataset, load_validation_dataset
 from cs336_basics.training.factory import build_model, build_optimizer
 from cs336_basics.training.runtime import configure_logging, resolve_device, set_seed
-from cs336_basics.training.tensorboard_monitor import TensorBoardMonitor
 from cs336_basics.training.trainer import Trainer, train
+from cs336_basics.training.wandb_monitor import WandbMonitor
 
 
 __all__ = [
@@ -33,10 +33,10 @@ __all__ = [
     "ModelConfig",
     "OptimizerConfig",
     "RunConfig",
-    "TensorBoardConfig",
-    "TensorBoardMonitor",
     "Trainer",
     "TrainingConfig",
+    "WandbConfig",
+    "WandbMonitor",
     "build_model",
     "build_optimizer",
     "configure_logging",

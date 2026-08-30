@@ -12,7 +12,7 @@
   "optimizer": {
     "learning_rate": 0.001,
     "min_learning_rate": 0.0001,
-    "warmup_iters": 10,
+    "warmup_iters": 500,
     "weight_decay": 0.01,
     "beta1": 0.9,
     "beta2": 0.999,
@@ -25,7 +25,7 @@
     "synthetic_num_tokens": 128
   },
   "run": {
-    "name": null
+    "name": "test-wandb"
   },
   "checkpoint": {
     "path": "data/checkpoint/train_checkpoint.pt",
@@ -52,14 +52,17 @@
     "show": true,
     "pause_seconds": 0.001
   },
-  "tensorboard": {
+  "wandb": {
     "enabled": true,
-    "log_dir": "log/tensorboard",
+    "project": "assignment1-basics",
+    "entity": null,
+    "mode": "online",
+    "log_dir": "log/wandb",
     "interval": 100,
-    "flush_secs": 30
+    "tags": []
   },
   "batch_size": 32,
-  "total_steps": 40000,
+  "total_steps": 3000,
   "device": "mps",
   "seed": 1150
 }

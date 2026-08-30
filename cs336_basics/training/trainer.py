@@ -28,7 +28,7 @@ from cs336_basics.training.data import load_dataset, load_validation_dataset
 from cs336_basics.training.factory import build_model, build_optimizer
 from cs336_basics.training.plotting import LossCurvePlotter
 from cs336_basics.training.runtime import configure_logging, resolve_device, set_seed
-from cs336_basics.training.tensorboard_monitor import TensorBoardMonitor
+from cs336_basics.training.wandb_monitor import WandbMonitor
 
 
 BatchSampler = Callable[..., tuple[torch.Tensor, torch.Tensor]]
@@ -79,7 +79,7 @@ class Trainer:
                 " and refreshing an interactive window" if config.plot.show else "",
             )
 
-        tensorboard_monitor: TensorBoardMonitor | None = None
+        wandb_monitor: WandbMonitor | None = None
 
         model.train()
         completed_step = start_step
@@ -95,14 +95,14 @@ class Trainer:
         original_signal_handlers = _install_shutdown_handlers(request_shutdown)
 
         try:
-            if config.tensorboard.enabled:
-                purge_step = start_step + 1 if start_step > 0 else None
-                tensorboard_monitor = TensorBoardMonitor(config.tensorboard, purge_step=purge_step)
-                tensorboard_monitor.record_config(config, step=purge_step or 0)
+            if config.wandb.enabled:
+                wandb_monitor = WandbMonitor(config.wandb, config)
                 logger.info(
-                    "Writing TensorBoard events to %s every %d step(s)",
-                    tensorboard_monitor.log_dir,
-                    config.tensorboard.interval,
+                    "Reporting metrics to W&B project=%s run=%s every %d step(s)%s",
+                    config.wandb.project,
+                    config.run.name,
+                    config.wandb.interval,
+                    f" at {wandb_monitor.url}" if wandb_monitor.url else "",
                 )
 
             logger.info(
@@ -134,8 +134,8 @@ class Trainer:
                     )
                     loss_plotter.maybe_render(step)
 
-                if tensorboard_monitor is not None:
-                    tensorboard_monitor.record_train_metrics(
+                if wandb_monitor is not None:
+                    wandb_monitor.record_train_metrics(
                         step,
                         train_loss,
                         learning_rate=lr,
@@ -169,8 +169,8 @@ class Trainer:
                     if loss_plotter is not None:
                         loss_plotter.record_validation_loss(step, eval_result.loss)
                         loss_plotter.maybe_render(step, force=True)
-                    if tensorboard_monitor is not None:
-                        tensorboard_monitor.record_validation_loss(step, eval_result.loss)
+                    if wandb_monitor is not None:
+                        wandb_monitor.record_validation_loss(step, eval_result.loss)
 
                 saved_checkpoint_path: Path | None = None
                 if config.checkpoint.save_interval > 0 and step % config.checkpoint.save_interval == 0:
@@ -197,7 +197,9 @@ class Trainer:
             if last_checkpoint_step == config.total_steps:
                 final_checkpoint_path = _checkpoint_path_for_step(checkpoint_path, config.total_steps)
             else:
-                final_checkpoint_path = _save_step_checkpoint(model, optimizer, config.total_steps, checkpoint_path, logger)
+                final_checkpoint_path = _save_step_checkpoint(
+                    model, optimizer, config.total_steps, checkpoint_path, logger
+                )
             logger.info("Training complete. Final checkpoint saved to %s", final_checkpoint_path)
         except KeyboardInterrupt:
             if completed_step <= start_step:
@@ -218,8 +220,8 @@ class Trainer:
                     loss_plotter.maybe_render(completed_step, force=True)
             finally:
                 try:
-                    if tensorboard_monitor is not None:
-                        tensorboard_monitor.close()
+                    if wandb_monitor is not None:
+                        wandb_monitor.close()
                 finally:
                     _restore_signal_handlers(original_signal_handlers)
 
@@ -285,11 +287,11 @@ def _config_for_training_run(config: TrainingConfig) -> TrainingConfig:
         log_file = _artifact_path_for_run(Path(config.logging.log_file), run_name)
         logging_config = replace(config.logging, log_file=str(log_file))
 
-    tensorboard_config = config.tensorboard
-    if config.tensorboard.enabled:
-        tensorboard_config = replace(
-            config.tensorboard,
-            log_dir=str(Path(config.tensorboard.log_dir) / run_name),
+    wandb_config = config.wandb
+    if config.wandb.enabled:
+        wandb_config = replace(
+            config.wandb,
+            log_dir=str(Path(config.wandb.log_dir) / run_name),
         )
 
     return replace(
@@ -297,7 +299,7 @@ def _config_for_training_run(config: TrainingConfig) -> TrainingConfig:
         checkpoint=replace(config.checkpoint, path=str(checkpoint_path)),
         logging=logging_config,
         plot=replace(config.plot, path=str(_artifact_path_for_run(Path(config.plot.path), run_name))),
-        tensorboard=tensorboard_config,
+        wandb=wandb_config,
         run=replace(config.run, name=run_name),
     )
 

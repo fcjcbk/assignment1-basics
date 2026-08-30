@@ -117,9 +117,8 @@ data/checkpoint/tinystories-debug/train_checkpoint_step_1000.pt
 
 同一次训练的日志和训练监控图也会写入对应 run 子目录，例如 `log/tinystories-debug/train.log` 和 `log/tinystories-debug/loss_curve.png`。
 
-启用 TensorBoard 时，event 文件会写入 `tensorboard.log_dir/<run_name>/`。例如根目录配置为
-`log/tensorboard`、run name 为 `tinystories-debug` 时，实际目录是
-`log/tensorboard/tinystories-debug/`。
+启用 W&B 时，本地运行元数据会写入 `wandb.log_dir/<run_name>/`，指标会归入配置的 W&B
+project。显示名称使用同一个 run name，便于和 checkpoint、日志及训练曲线对应。
 
 训练支持 `checkpoint.resume_from` 继续训练：
 
@@ -137,7 +136,8 @@ data/checkpoint/tinystories-debug/train_checkpoint_step_1000.pt
 ```
 
 `checkpoint.resume_from` 是输入 checkpoint 路径，不会被 run name 自动改写。若希望继续训练的后续产物仍写入原 run 目录，请显式设置同一个 `run.name`。
-TensorBoard 会从 checkpoint step 的下一步清理该 run 中可能重叠的事件，再继续记录新的指标。
+每次启动训练都会创建一个独立的 W&B run；从 checkpoint 恢复时，新 run 的 `global_step` 会从 checkpoint
+之后继续，避免覆盖之前的指标，并可在 W&B 中将两个 run 放在同一视图比较。
 
 ### eval
 
@@ -299,27 +299,32 @@ uv run cs336_basics/cli.py encode-validation \
 
 `plot.show=true` 需要当前 Python/Matplotlib 能使用交互式图形后端；在无桌面会话或只配置了 `Agg` 后端的环境里，建议保持默认的 `false`。
 
-TensorBoard 由 `tensorboard` 配置控制。启用后记录 train/validation loss、learning rate、steps/s 和 elapsed time：
+W&B 由 `wandb` 配置控制。启用后记录 train/validation loss、learning rate、steps/s 和 elapsed time，
+并把完整训练配置保存为可筛选的 run config：
 
 ```json
 {
-  "tensorboard": {
+  "wandb": {
     "enabled": true,
-    "log_dir": "log/tensorboard",
+    "project": "assignment1-basics",
+    "entity": null,
+    "mode": "online",
+    "log_dir": "log/wandb",
     "interval": 10,
-    "flush_secs": 30
+    "tags": []
   }
 }
 ```
 
-启动 TensorBoard 并查看所有 run：
+首次在线上报前登录 W&B：
 
 ```sh
-uv run tensorboard --logdir log/tensorboard
+uv run wandb login
 ```
 
-`tensorboard.interval` 控制训练标量的写入间隔；第 1 步和最后一步始终写入。validation loss 仍按
-`eval.interval` 产生。writer 会在正常完成、中断或异常退出时关闭并刷新。
+`wandb.interval` 控制训练标量的上报间隔；第 1 步和最后一步始终上报。validation loss 仍按
+`eval.interval` 产生。训练正常完成、中断或异常退出时都会结束 W&B run。不能联网时可将
+`wandb.mode` 设为 `offline`，之后使用 `uv run wandb sync <本地 run 目录>` 上传。
 
 日志文件由 `logging.log_file` 控制，默认同时输出到 stdout。
 
@@ -334,7 +339,7 @@ cs336_basics/training/factory.py          # build_model、build_optimizer
 cs336_basics/training/data.py             # token dataset 加载
 cs336_basics/training/checkpoint_eval.py  # checkpoint 验证 loss
 cs336_basics/training/plotting.py         # loss curve 渲染
-cs336_basics/training/tensorboard_monitor.py # TensorBoard event 写入
+cs336_basics/training/wandb_monitor.py       # W&B 指标和配置上报
 cs336_basics/training/trainer.py          # Trainer 和训练循环
 ```
 

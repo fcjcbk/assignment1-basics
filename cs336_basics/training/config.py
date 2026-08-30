@@ -78,19 +78,28 @@ class LossPlotConfig:
 
 
 @dataclass
-class TensorBoardConfig:
+class WandbConfig:
     enabled: bool = False
-    log_dir: str = "log/tensorboard"
+    project: str = "assignment1-basics"
+    entity: str | None = None
+    mode: str = "online"
+    log_dir: str = "log/wandb"
     interval: int = 10
-    flush_secs: int = 30
+    tags: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.project, str) or not self.project.strip():
+            raise ValueError("wandb.project must be a non-empty string")
+        if self.entity is not None and (not isinstance(self.entity, str) or not self.entity.strip()):
+            raise ValueError("wandb.entity must be a non-empty string or null")
+        if self.mode not in {"online", "offline", "disabled", "shared"}:
+            raise ValueError("wandb.mode must be one of: online, offline, disabled, shared")
         if not isinstance(self.log_dir, str) or not self.log_dir.strip():
-            raise ValueError("tensorboard.log_dir must be a non-empty string")
+            raise ValueError("wandb.log_dir must be a non-empty string")
         if self.interval <= 0:
-            raise ValueError("tensorboard.interval must be positive")
-        if self.flush_secs <= 0:
-            raise ValueError("tensorboard.flush_secs must be positive")
+            raise ValueError("wandb.interval must be positive")
+        if not isinstance(self.tags, list) or not all(isinstance(tag, str) and tag.strip() for tag in self.tags):
+            raise ValueError("wandb.tags must be a list of non-empty strings")
 
 
 @dataclass
@@ -110,7 +119,7 @@ class TrainingConfig:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     eval: EvalConfig = field(default_factory=EvalConfig)
     plot: LossPlotConfig = field(default_factory=LossPlotConfig)
-    tensorboard: TensorBoardConfig = field(default_factory=TensorBoardConfig)
+    wandb: WandbConfig = field(default_factory=WandbConfig)
     run: RunConfig = field(default_factory=RunConfig)
     batch_size: int = 8
     total_steps: int = 100

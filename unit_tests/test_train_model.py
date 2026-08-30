@@ -7,7 +7,6 @@ import signal
 import torch
 import numpy as np
 import pytest
-from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 from torchinfo import summary as torchinfo_summary
 
 import cs336_basics.train_model as train_model
@@ -21,9 +20,39 @@ from cs336_basics.train_model import (
     ModelConfig,
     OptimizerConfig,
     RunConfig,
-    TensorBoardConfig,
     TrainingConfig,
+    WandbConfig,
 )
+
+
+class _FakeWandbRun:
+    def __init__(self, init_kwargs):
+        self.init_kwargs = init_kwargs
+        self.url = "https://wandb.example/runs/test"
+        self.defined_metrics = []
+        self.logged_metrics = []
+        self.finished = False
+
+    def define_metric(self, *args, **kwargs):
+        self.defined_metrics.append((args, kwargs))
+
+    def log(self, metrics):
+        self.logged_metrics.append(metrics)
+
+    def finish(self):
+        self.finished = True
+
+
+def _capture_wandb_runs(monkeypatch):
+    runs = []
+
+    def fake_init(**kwargs):
+        run = _FakeWandbRun(kwargs)
+        runs.append(run)
+        return run
+
+    monkeypatch.setattr("cs336_basics.training.wandb_monitor.wandb.init", fake_init)
+    return runs
 
 
 def _tiny_training_config(
@@ -32,7 +61,7 @@ def _tiny_training_config(
     checkpoint_path: Path | None = None,
     log_path: Path | None = None,
     plot_path: Path | None = None,
-    tensorboard_log_dir: Path | None = None,
+    wandb_log_dir: Path | None = None,
     run_name: str | None = None,
 ) -> TrainingConfig:
     return TrainingConfig(
@@ -59,11 +88,12 @@ def _tiny_training_config(
             path=str(plot_path or tmp_path / "loss_curve.png"),
             interval=1,
         ),
-        tensorboard=TensorBoardConfig(
-            enabled=tensorboard_log_dir is not None,
-            log_dir=str(tensorboard_log_dir or tmp_path / "tensorboard"),
+        wandb=WandbConfig(
+            enabled=wandb_log_dir is not None,
+            project="assignment1-tests",
+            mode="offline",
+            log_dir=str(wandb_log_dir or tmp_path / "wandb"),
             interval=1,
-            flush_secs=1,
         ),
         run=RunConfig(name=run_name),
         batch_size=2,
@@ -264,14 +294,15 @@ def test_train_writes_matplotlib_loss_curve_when_plot_config_is_enabled(tmp_path
     assert (tmp_path / "plot-run" / "loss_curve.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
 
 
-def test_train_writes_tensorboard_metrics_to_run_directory(tmp_path: Path):
+def test_train_reports_metrics_and_config_to_wandb(tmp_path: Path, monkeypatch):
     valid_path = tmp_path / "valid.npy"
-    tensorboard_log_dir = tmp_path / "tensorboard"
+    wandb_log_dir = tmp_path / "wandb"
+    runs = _capture_wandb_runs(monkeypatch)
     np.save(valid_path, np.arange(128, dtype=np.int64) % 32)
     config = _tiny_training_config(
         tmp_path,
-        tensorboard_log_dir=tensorboard_log_dir,
-        run_name="tensorboard-run",
+        wandb_log_dir=wandb_log_dir,
+        run_name="wandb-run",
     )
     config = replace(
         config,
@@ -280,25 +311,35 @@ def test_train_writes_tensorboard_metrics_to_run_directory(tmp_path: Path):
 
     train_model.train(config)
 
-    events = EventAccumulator(str(tensorboard_log_dir / "tensorboard-run"))
-    events.Reload()
-    scalar_tags = set(events.Tags()["scalars"])
+    assert len(runs) == 1
+    run = runs[0]
+    assert run.init_kwargs["project"] == "assignment1-tests"
+    assert run.init_kwargs["name"] == "wandb-run"
+    assert run.init_kwargs["mode"] == "offline"
+    assert run.init_kwargs["dir"] == str(wandb_log_dir / "wandb-run")
+    assert run.init_kwargs["config"]["run"]["name"] == "wandb-run"
+    assert (("global_step",), {}) in run.defined_metrics
+    assert (("*",), {"step_metric": "global_step"}) in run.defined_metrics
+
+    reported_metrics = {name for log in run.logged_metrics for name in log}
     assert {
         "Loss/train",
         "Loss/validation",
         "Optimization/learning_rate",
         "Performance/steps_per_second",
         "Performance/elapsed_seconds",
-    } <= scalar_tags
-    assert [event.step for event in events.Scalars("Loss/train")] == [1, 2]
-    assert [event.step for event in events.Scalars("Loss/validation")] == [1, 2]
+    } <= reported_metrics
+    assert [log["global_step"] for log in run.logged_metrics if "Loss/train" in log] == [1, 2]
+    assert [log["global_step"] for log in run.logged_metrics if "Loss/validation" in log] == [1, 2]
+    assert run.finished
 
 
-def test_resumed_training_purges_overlapping_tensorboard_steps(tmp_path: Path):
-    tensorboard_log_dir = tmp_path / "tensorboard"
+def test_resumed_training_starts_a_new_wandb_run_at_the_resumed_step(tmp_path: Path, monkeypatch):
+    wandb_log_dir = tmp_path / "wandb"
+    runs = _capture_wandb_runs(monkeypatch)
     first_config = _tiny_training_config(
         tmp_path,
-        tensorboard_log_dir=tensorboard_log_dir,
+        wandb_log_dir=wandb_log_dir,
         run_name="resume-run",
     )
     train_model.train(replace(first_config, total_steps=3))
@@ -313,9 +354,10 @@ def test_resumed_training_purges_overlapping_tensorboard_steps(tmp_path: Path):
     )
     train_model.train(resumed_config)
 
-    events = EventAccumulator(str(tensorboard_log_dir / "resume-run"))
-    events.Reload()
-    assert [event.step for event in events.Scalars("Loss/train")] == [1, 2, 3, 4]
+    assert len(runs) == 2
+    assert [log["global_step"] for log in runs[0].logged_metrics if "Loss/train" in log] == [1, 2, 3]
+    assert [log["global_step"] for log in runs[1].logged_metrics if "Loss/train" in log] == [3, 4]
+    assert all(run.finished for run in runs)
 
 
 def test_train_uses_manual_run_name_for_all_training_artifacts(tmp_path: Path):
@@ -360,16 +402,19 @@ def test_load_config_loads_manual_run_name(tmp_path: Path):
     assert config.run.name == "smoke-run"
 
 
-def test_load_config_loads_tensorboard_settings(tmp_path: Path):
+def test_load_config_loads_wandb_settings(tmp_path: Path):
     config_path = tmp_path / "config.json"
     config_path.write_text(
         json.dumps(
             {
-                "tensorboard": {
+                "wandb": {
                     "enabled": True,
-                    "log_dir": "custom/events",
+                    "project": "custom-project",
+                    "entity": "custom-team",
+                    "mode": "offline",
+                    "log_dir": "custom/wandb",
                     "interval": 25,
-                    "flush_secs": 5,
+                    "tags": ["tiny", "smoke"],
                 }
             }
         ),
@@ -378,11 +423,14 @@ def test_load_config_loads_tensorboard_settings(tmp_path: Path):
 
     config = train_model.load_config(config_path)
 
-    assert config.tensorboard == TensorBoardConfig(
+    assert config.wandb == WandbConfig(
         enabled=True,
-        log_dir="custom/events",
+        project="custom-project",
+        entity="custom-team",
+        mode="offline",
+        log_dir="custom/wandb",
         interval=25,
-        flush_secs=5,
+        tags=["tiny", "smoke"],
     )
 
 

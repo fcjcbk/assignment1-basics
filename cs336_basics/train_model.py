@@ -17,8 +17,8 @@ from cs336_basics.training.config import (
     ModelConfig,
     OptimizerConfig,
     RunConfig,
-    TensorBoardConfig,
     TrainingConfig,
+    WandbConfig,
     load_config,
     print_example_config,
 )
@@ -26,7 +26,6 @@ from cs336_basics.training.data import load_dataset, load_validation_dataset
 from cs336_basics.training.factory import build_model, build_optimizer
 from cs336_basics.training.plotting import LossCurvePlotter, render_loss_curve_png
 from cs336_basics.training.runtime import configure_logging, resolve_device, set_seed
-from cs336_basics.training.tensorboard_monitor import TensorBoardMonitor
 from cs336_basics.training.trainer import (
     Trainer,
     _checkpoint_path_for_step,
@@ -34,6 +33,7 @@ from cs336_basics.training.trainer import (
     _signal_name,
     train as _train,
 )
+from cs336_basics.training.wandb_monitor import WandbMonitor
 
 
 def train(config: TrainingConfig) -> None:
@@ -44,8 +44,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train a Transformer language model from a JSON config.")
     parser.add_argument("--config", type=str, default=None, help="Path to a JSON training config.")
     parser.add_argument("--print-example-config", action="store_true", help="Print a complete example config and exit.")
-    parser.add_argument("--eval-checkpoint", type=str, default=None, help="Evaluate this checkpoint and exit without training.")
-    parser.add_argument("--valid-path", type=str, default=None, help="Validation token dataset path for checkpoint eval.")
+    parser.add_argument(
+        "--eval-checkpoint", type=str, default=None, help="Evaluate this checkpoint and exit without training."
+    )
+    parser.add_argument(
+        "--valid-path", type=str, default=None, help="Validation token dataset path for checkpoint eval."
+    )
     parser.add_argument("--eval-mode", choices=("sampled", "full"), default=None, help="Validation mode override.")
     parser.add_argument("--eval-num-batches", type=int, default=None, help="Number of sampled validation batches.")
     parser.add_argument("--eval-batch-size", type=int, default=None, help="Validation batch size override.")
@@ -86,10 +90,10 @@ __all__ = [
     "ModelConfig",
     "OptimizerConfig",
     "RunConfig",
-    "TensorBoardConfig",
-    "TensorBoardMonitor",
     "Trainer",
     "TrainingConfig",
+    "WandbConfig",
+    "WandbMonitor",
     "_checkpoint_path_for_step",
     "_save_step_checkpoint",
     "_signal_name",
